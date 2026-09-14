@@ -34,7 +34,16 @@ export type MovementMode = 'keys' | 'click'
 /** Player 1's trigger: the left mouse button or the bound shoot key. */
 export type FireBinding = 'mouse' | 'key'
 
+/** Avatars are emoji so a profile costs nothing to store or draw. */
+export const AVATARS = ['🧟', '🔫', '🪖', '🧪', '🩸', '🛠️', '🐺', '☠️'] as const
+
+export const NAME_MIN = 3
+export const NAME_MAX = 16
+
 export interface Settings {
+  /** Display name shown in the menu header; empty until one is set. */
+  playerName: string
+  avatar: string
   /** 0→1 gains applied to the music bus and every one-shot sound. */
   bgmVolume: number
   sfxVolume: number
@@ -45,6 +54,8 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  playerName: '',
+  avatar: AVATARS[0],
   bgmVolume: 0.35,
   sfxVolume: 0.9,
   p1: {
@@ -75,6 +86,12 @@ function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
 }
 
+/** Trims a typed name to the accepted length; '' means 'not set yet'. */
+export function cleanName(value: string): string {
+  const trimmed = value.trim().slice(0, NAME_MAX)
+  return trimmed.length >= NAME_MIN ? trimmed : ''
+}
+
 function readBindings(raw: unknown, fallback: KeyBindings): KeyBindings {
   const out: KeyBindings = { ...fallback }
   if (!raw || typeof raw !== 'object') return out
@@ -91,6 +108,11 @@ function parse(raw: string | null): Settings {
   try {
     const data = JSON.parse(raw) as Record<string, unknown>
     return {
+      playerName: typeof data.playerName === 'string' ? cleanName(data.playerName) : '',
+      avatar:
+        typeof data.avatar === 'string' && AVATARS.includes(data.avatar as (typeof AVATARS)[number])
+          ? data.avatar
+          : DEFAULT_SETTINGS.avatar,
       bgmVolume:
         typeof data.bgmVolume === 'number' ? clamp01(data.bgmVolume) : DEFAULT_SETTINGS.bgmVolume,
       sfxVolume:
@@ -131,7 +153,9 @@ export function updateSettings(patch: Partial<Settings>): void {
 }
 
 export function resetSettings(): void {
-  saveSettings(structuredClone(DEFAULT_SETTINGS))
+  // Defaults cover audio and controls; the profile is not a preference.
+  const { playerName, avatar } = current
+  saveSettings({ ...structuredClone(DEFAULT_SETTINGS), playerName, avatar })
 }
 
 /** The code this key event binds to, e.g. 'keyw' or 'arrowleft'. */

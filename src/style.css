@@ -41,3 +41,22 @@ canvas {
 .cheat-shake {
   animation: cheat-shake 0.45s ease-in-out;
 }
+
+/* Touchscreens: no double-tap zoom, pinch or rubber-band scroll over the game. */
+html,
+body,
+canvas,
+#touch-controls {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* Menus and modals still need a one-finger scroll. */
+.overflow-y-auto,
+input,
+textarea {
+  touch-action: pan-y;
+  user-select: auto;
+}

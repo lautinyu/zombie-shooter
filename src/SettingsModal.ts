@@ -1,6 +1,10 @@
 import type { BindableAction, Settings } from './settings'
 import {
+  AVATARS,
   BINDABLE_ACTIONS,
+  NAME_MAX,
+  NAME_MIN,
+  cleanName,
   eventCode,
   keyLabel,
   mouseCode,
@@ -11,12 +15,12 @@ import {
 import { playSfx } from './audio'
 
 export interface SettingsPanel {
-  open: () => void
+  open: (tab?: Tab) => void
   close: () => void
   isOpen: () => boolean
 }
 
-type Tab = 'audio' | 'controls'
+export type Tab = 'profile' | 'audio' | 'controls'
 
 /** The slot currently listening for the next key or mouse button. */
 interface Capture {
@@ -76,6 +80,25 @@ export function mountSettings(): SettingsPanel {
     ).join('')
   }
 
+  const profileTab = () => {
+    const s = settings()
+    const choices = AVATARS.map((a) => {
+      const active = s.avatar === a
+      const ring = active
+        ? 'bg-emerald-500/20 ring-emerald-400/70'
+        : 'bg-white/5 ring-white/10 hover:bg-white/10'
+      return `<button data-avatar="${a}" class="h-14 w-14 rounded-xl text-3xl leading-none ring-2 ${ring}">${a}</button>`
+    }).join('')
+    return `
+      <label class="mb-2 block text-xs font-black uppercase tracking-widest text-slate-300">Player Name</label>
+      <input id="profile-name" type="text" maxlength="${NAME_MAX}" value="${s.playerName}" placeholder="Survivor"
+        class="w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/15 outline-none focus:ring-emerald-400/60" />
+      <p id="profile-name-hint" class="mt-1 text-[11px] text-slate-500">${NAME_MIN}–${NAME_MAX} characters.</p>
+      <div class="mb-2 mt-6 text-xs font-black uppercase tracking-widest text-slate-300">Profile Avatar</div>
+      <div class="flex flex-wrap gap-3">${choices}</div>
+      <p class="mt-6 text-xs text-slate-500">Name, avatar and volume are saved to this browser automatically.</p>`
+  }
+
   const audioTab = () => {
     const s = settings()
     const row = (id: string, label: string, value: number) => `
@@ -128,11 +151,12 @@ export function mountSettings(): SettingsPanel {
         <button id="settings-close" class="rounded-lg bg-white/10 px-4 py-1.5 text-xs font-bold text-white hover:bg-white/20">Close</button>
       </div>
       <div class="flex gap-2 px-6 py-3">
+        ${tabButton('profile', 'Profile')}
         ${tabButton('audio', 'Audio Settings')}
         ${tabButton('controls', 'Controls / Keybindings')}
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-6">
-        ${tab === 'audio' ? audioTab() : controlsTab()}
+        ${tab === 'profile' ? profileTab() : tab === 'audio' ? audioTab() : controlsTab()}
       </div>`
     wire()
   }
@@ -145,8 +169,29 @@ export function mountSettings(): SettingsPanel {
     panel.querySelector('#settings-close')?.addEventListener('click', close)
     for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-tab]')) {
       button.addEventListener('click', () => {
-        tab = button.dataset.tab === 'controls' ? 'controls' : 'audio'
+        const next = button.dataset.tab
+        tab = next === 'controls' ? 'controls' : next === 'profile' ? 'profile' : 'audio'
         capture = null
+        render()
+      })
+    }
+
+    const nameInput = panel.querySelector<HTMLInputElement>('#profile-name')
+    const nameHint = panel.querySelector<HTMLElement>('#profile-name-hint')
+    nameInput?.addEventListener('input', () => {
+      const name = cleanName(nameInput.value)
+      if (nameHint) {
+        nameHint.textContent = name
+          ? `Saved as "${name}".`
+          : `Enter at least ${NAME_MIN} characters to save a name.`
+      }
+      updateSettings({ playerName: name })
+    })
+
+    for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-avatar]')) {
+      button.addEventListener('click', () => {
+        updateSettings({ avatar: button.dataset.avatar ?? AVATARS[0] })
+        playSfx('swap')
         render()
       })
     }
@@ -252,10 +297,10 @@ export function mountSettings(): SettingsPanel {
   })
 
   return {
-    open: () => {
+    open: (startTab: Tab = 'audio') => {
       open = true
       capture = null
-      tab = 'audio'
+      tab = startTab
       render()
       overlay.classList.remove('hidden')
       overlay.classList.add('flex')

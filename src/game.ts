@@ -28,6 +28,7 @@ import { extractionField, flowDirection, goalField } from './nav'
 import type { FlowField } from './nav'
 import { drawCharacterSkin } from './skins'
 import { bindInput, clearInput, keysPressed } from './input'
+import { touchStick } from './TouchControls'
 import { settings } from './settings'
 import { AOE_TICK_COOLDOWN, AOE_TICK_DAMAGE, AoeTicker, aoeTickCount } from './aoe'
 import { HazardManager, OIL_FRICTION_LOSS, OIL_SLIDE_TIME, buildHazards } from './HazardManager'
@@ -2222,6 +2223,14 @@ export class Game {
       if (p.mag === 0) this.startReload(p)
     } else if (steered) {
       p.shooting = keysPressed.shooting
+    } else if (p.id === 1 && touchStick.active) {
+      // No mouse on a touchscreen: the muzzle tracks the nearest threat, and
+      // falls back to the direction the thumb is pushing.
+      const mark = this.nearestEnemyTo(p, 1200)
+      p.angle = mark
+        ? Math.atan2(mark.y - p.y, mark.x - p.x)
+        : Math.atan2(touchStick.y, touchStick.x)
+      p.shooting = keysPressed.shooting
     } else {
       this.mouseWorld.x = this.mouseScreen.x / this.zoom + this.camera.x
       this.mouseWorld.y = this.mouseScreen.y / this.zoom + this.camera.y
@@ -2289,6 +2298,8 @@ export class Game {
         return { x: tx / len, y: ty / len }
       }
     }
+    // The thumbstick is analogue, so it replaces the keys outright for P1.
+    if (p.id === 1 && touchStick.active) return { x: touchStick.x, y: touchStick.y }
     if (p.id === 1) {
       if (k.w || (solo && k.up)) dy -= 1
       if (k.s || (solo && k.down)) dy += 1

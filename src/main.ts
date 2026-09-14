@@ -44,6 +44,7 @@ import { mountVoidBlast } from './voidblast'
 import { mountEndlessGauntlet } from './EndlessGauntlet'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
+import { onSettingsChange } from './settings'
 import type { ArcadeGameId } from './arcadeStats'
 
 declare global {
@@ -173,6 +174,10 @@ app.innerHTML = `
     <header class="sticky top-0 z-50 shrink-0 border-b border-white/10 bg-slate-950/90 px-6 pb-3 pt-4 backdrop-blur-md">
       <div class="mx-auto w-full max-w-4xl">
         <h1 class="text-center text-4xl font-black tracking-tight text-emerald-400 drop-shadow">ZOMBIE SHOOTER</h1>
+        <button id="profile-chip" class="absolute right-6 top-4 flex items-center gap-2 rounded-full bg-white/5 py-1.5 pl-2 pr-4 text-sm font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/10" title="Profile / Settings">
+          <span id="profile-avatar" class="text-xl leading-none">🧟</span>
+          <span id="profile-name-label">Set Profile</span>
+        </button>
         <div class="mt-2 text-center text-sm font-bold text-yellow-300">Scrap: <span id="menu-scrap">0</span>
           <span class="ml-3 text-cyan-300">Frozen Data Chips: <span id="menu-chips">0</span></span>
           <span class="ml-3 text-amber-400">Ancient Amber: <span id="menu-amber">0</span></span>
@@ -183,6 +188,7 @@ app.innerHTML = `
           <button id="locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
           <button id="textures-btn" class="rounded-lg bg-violet-500/15 px-6 py-2 text-sm font-bold text-violet-300 ring-1 ring-violet-400/40 hover:bg-violet-500/25">Texture Pack</button>
           <button id="arcade-hub-btn" class="animate-pulse rounded-lg bg-cyan-500/20 px-6 py-2 text-sm font-black uppercase tracking-widest text-cyan-200 ring-2 ring-cyan-400/70 shadow-[0_0_22px_rgba(34,211,238,0.5)] hover:bg-cyan-500/35">🕹️ Arcade Hub</button>
+          <button id="profile-btn" class="rounded-lg bg-emerald-500/15 px-6 py-2 text-sm font-bold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/25">👤 Profile</button>
           <button id="settings-btn" class="rounded-lg bg-slate-500/15 px-6 py-2 text-sm font-bold text-slate-200 ring-1 ring-slate-400/40 hover:bg-slate-500/25">⚙️ Settings</button>
         </nav>
       </div>
@@ -1080,6 +1086,20 @@ const settingsPanel = mountSettings()
 el('settings-btn').addEventListener('click', () => {
   resumeAudio()
   settingsPanel.open()
+})
+
+const openProfile = () => {
+  resumeAudio()
+  settingsPanel.open('profile')
+}
+el('profile-btn').addEventListener('click', openProfile)
+el('profile-chip').addEventListener('click', openProfile)
+
+const profileAvatar = el('profile-avatar')
+const profileNameLabel = el('profile-name-label')
+onSettingsChange((s) => {
+  profileAvatar.textContent = s.avatar
+  profileNameLabel.textContent = s.playerName || 'Set Profile'
 })
 
 el('shop-btn').addEventListener('click', () => openArsenal('shop'))

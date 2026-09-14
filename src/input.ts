@@ -1,5 +1,6 @@
 import type { BindableAction, KeyBindings } from './settings'
 import { eventCode, settings } from './settings'
+import { isTouchDevice, mountTouchControls } from './TouchControls'
 
 /**
  * Persistent input state. Movement flags and the shooting flag are separate
@@ -166,4 +167,6 @@ export function bindInput(canvas: HTMLCanvasElement, actions: InputActions) {
   canvas.addEventListener('dragstart', (e) => e.preventDefault())
   canvas.addEventListener('selectstart', (e) => e.preventDefault())
   canvas.addEventListener('contextmenu', (e) => e.preventDefault())
+
+  if (isTouchDevice()) mountTouchControls(actions)
 }
