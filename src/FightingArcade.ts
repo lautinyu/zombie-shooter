@@ -37,7 +37,7 @@ const BLOCK_WALK_SPEED = 70
 /** How fast knockback velocity decays, in px/s². */
 const KNOCKBACK_DRAG = 700
 /** Seconds an attack input waits for the fighter to become actionable. */
-const INPUT_BUFFER = 0.18
+const INPUT_BUFFER = 0.25
 
 type MoveId = 'light' | 'heavy' | 'special'
 type Phase = 'attract' | 'fight' | 'round-over' | 'match-over'
@@ -166,19 +166,19 @@ const KEYS: Record<1 | 2, Record<ActionId, string[]>> = {
     left: ['a'],
     right: ['d'],
     jump: ['w'],
-    block: ['s'],
-    light: ['f'],
-    heavy: ['g'],
-    special: ['h'],
+    block: [' ', 'i', 's'],
+    light: ['j'],
+    heavy: ['k'],
+    special: ['l'],
   },
   2: {
     left: ['arrowleft'],
     right: ['arrowright'],
     jump: ['arrowup'],
-    block: ['arrowdown'],
-    light: ['j'],
-    heavy: ['k'],
-    special: ['l'],
+    block: ['arrowdown', '0'],
+    light: ['1'],
+    heavy: ['2'],
+    special: ['3'],
   },
 }
 
@@ -206,7 +206,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const legend = document.createElement('div')
   legend.className = 'pt-3 text-center text-[11px] uppercase tracking-[0.2em] text-slate-500'
   legend.textContent =
-    'P1 A/D move · W jump · S block · F light · G heavy · H special   ·   P2 ←→ · ↑ · ↓ · J K L'
+    'P1 A/D move · W jump · J light · K heavy · L special · Space/I block   ·   P2 ←→ · ↑ jump · 1 2 3 · ↓/0 block'
   overlay.appendChild(legend)
 
   const pad = buildTouchPad()
@@ -470,16 +470,20 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     const swing = (id: MoveId) => {
       startMove(f, id)
-      cpuPause = (1.05 - skill * 0.22) * (0.8 + Math.random() * 0.6)
+      cpuPause = (1.5 - skill * 0.4) * (0.8 + Math.random() * 0.6)
     }
+
+    // Early opponents misjudge spacing and swing from too far out, leaving the
+    // whiff open to punishment; late ones only commit inside true range.
+    const sloppy = 1 + Math.max(0, 1 - skill) * 0.7
 
     if (cpuIntent === 'approach') f.x += dir * WALK_SPEED * 0.9 * dt
     else if (cpuIntent === 'retreat') f.x -= dir * BACK_SPEED * dt
     else if (cpuIntent === 'attack') {
-      if (f.specialCd === 0 && gap < MOVES.special.reach && Math.random() < 0.25)
+      if (f.specialCd === 0 && gap < MOVES.special.reach * sloppy && Math.random() < 0.25)
         swing('special')
-      else if (gap < MOVES.heavy.reach && Math.random() < 0.3) swing('heavy')
-      else if (gap < MOVES.light.reach) swing('light')
+      else if (gap < MOVES.heavy.reach * sloppy && Math.random() < 0.3) swing('heavy')
+      else if (gap < MOVES.light.reach * sloppy) swing('light')
       else f.x += dir * WALK_SPEED * 0.9 * dt
     }
   }
@@ -726,8 +730,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       retroText('INSERT COIN', 196, 28, '#fcd34d', true)
       retroText('[1] ARCADE — PLAYER VS CPU LADDER', 260, 22, '#e2e8f0')
       retroText('[2] VERSUS — LOCAL 2 PLAYER', 296, 22, '#e2e8f0')
-      retroText('P1  A/D MOVE · W JUMP · S BLOCK · F LIGHT · G HEAVY · H SPECIAL', 360, 15, '#94a3b8')
-      retroText('P2  ARROWS MOVE/JUMP/BLOCK · J LIGHT · K HEAVY · L SPECIAL', 384, 15, '#94a3b8')
+      retroText('P1  A/D MOVE · W JUMP · J LIGHT · K HEAVY · L SPECIAL · SPACE/I BLOCK', 360, 15, '#94a3b8')
+      retroText('P2  ARROWS MOVE/JUMP · 1 LIGHT · 2 HEAVY · 3 SPECIAL · ↓/0 BLOCK', 384, 15, '#94a3b8')
       retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 424, 14, '#65a30d')
     }
 
@@ -767,8 +771,10 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       close()
       return
     }
+    // 1/2 pick a mode on the attract screen; mid-match they are P2's attacks.
     const idle = phase === 'attract' || (phase === 'match-over' && phaseTimer > 1.4)
     if (idle && (key === '1' || key === '2')) startMatch(key === '2')
+    if (idle && key === 'enter') startMatch(false)
   }
 
   const onKeyUp = (e: KeyboardEvent) => {
