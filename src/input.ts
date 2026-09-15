@@ -1,6 +1,6 @@
 import type { BindableAction, KeyBindings } from './settings'
 import { eventCode, settings } from './settings'
-import { isTouchDevice, mountTouchControls } from './TouchControls'
+import { mountTouchControls } from './TouchControls'
 
 /**
  * Persistent input state. Movement flags and the shooting flag are separate
@@ -168,5 +168,6 @@ export function bindInput(canvas: HTMLCanvasElement, actions: InputActions) {
   canvas.addEventListener('selectstart', (e) => e.preventDefault())
   canvas.addEventListener('contextmenu', (e) => e.preventDefault())
 
-  if (isTouchDevice()) mountTouchControls(actions)
+  // Mounted always; the pad shows itself only on a touchscreen mid-mission.
+  mountTouchControls(actions)
 }

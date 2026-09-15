@@ -1,6 +1,6 @@
 /**
  * On-screen controls for phones and tablets: an analogue thumbstick on the
- * left for movement and action buttons on the right. The stick writes into
+ * left for movement, action buttons on the right. The stick writes into
  * `touchStick`, which the game reads instead of the movement keys, and the
  * buttons drive the same action callbacks the keyboard uses.
  */
@@ -8,42 +8,67 @@
 import type { InputActions } from './input'
 import { keysPressed } from './input'
 
-/** Live thumbstick vector; `x`/`y` are already clamped to a unit circle. */
-export const touchStick = { active: false, x: 0, y: 0 }
+/**
+ * Live pad state. `x`/`y` are clamped to a unit circle; `engaged` stays true
+ * once the pad has been touched so aiming keeps auto-tracking after the thumb
+ * lifts, since a touchscreen has no mouse cursor to fall back on.
+ */
+export const touchStick = { active: false, engaged: false, x: 0, y: 0 }
 
 /** Radius of the stick well in CSS pixels; a full push sits on the edge. */
-const STICK_RADIUS = 56
+const STICK_RADIUS = 64
 /** Deflection below this is treated as a resting thumb. */
-const DEAD_ZONE = 0.18
+const DEAD_ZONE = 0.16
 
 /** True on devices whose primary pointer cannot hover, i.e. touchscreens. */
 export function isTouchDevice(): boolean {
-  return window.matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0
+  return (
+    'ontouchstart' in window ||
+    navigator.maxTouchPoints > 0 ||
+    window.matchMedia('(pointer: coarse)').matches
+  )
 }
 
 const BUTTON_CLASS =
-  'pointer-events-auto flex items-center justify-center rounded-full bg-white/10 font-black uppercase text-white ring-2 ring-white/25 active:bg-emerald-500/40 active:ring-emerald-300/70'
+  'pointer-events-auto flex touch-none select-none items-center justify-center rounded-full bg-white/10 font-black uppercase text-white ring-2 ring-white/25 backdrop-blur-sm active:bg-emerald-500/50 active:ring-emerald-300/80'
 
 function button(id: string, label: string, size: string, text: string): string {
-  return `<button id="${id}" class="${BUTTON_CLASS} ${size} ${text}">${label}</button>`
+  return `<button id="${id}" type="button" class="${BUTTON_CLASS} ${size} ${text}">${label}</button>`
+}
+
+/** Press and release handlers for a pad button, with the tap default eaten. */
+function hold(el: HTMLElement, down: () => void, up?: () => void): void {
+  el.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    el.setPointerCapture(e.pointerId)
+    down()
+  })
+  const end = (e: PointerEvent) => {
+    e.preventDefault()
+    up?.()
+  }
+  el.addEventListener('pointerup', end)
+  el.addEventListener('pointercancel', end)
 }
 
 export function mountTouchControls(actions: InputActions): void {
+  if (document.getElementById('touch-controls')) return
+
   const root = document.createElement('div')
   root.id = 'touch-controls'
-  root.className =
-    'pointer-events-none fixed inset-0 z-40 hidden touch-none select-none [touch-action:none]'
+  root.className = 'pointer-events-none fixed inset-0 z-[55] hidden touch-none select-none'
   root.innerHTML = `
-    <div id="touch-stick" class="pointer-events-auto absolute bottom-8 left-8 h-32 w-32 rounded-full bg-white/5 ring-2 ring-white/20">
-      <div id="touch-nub" class="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/40 ring-2 ring-emerald-300/60"></div>
+    <div id="touch-stick" style="bottom: max(1.5rem, env(safe-area-inset-bottom))" class="pointer-events-auto absolute left-6 h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
+      <div id="touch-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/50 ring-2 ring-emerald-200/70"></div>
     </div>
-    <div class="absolute bottom-8 right-8 flex items-end gap-4">
+    <div style="bottom: max(1.5rem, env(safe-area-inset-bottom))" class="absolute right-6 flex items-end gap-3">
       <div class="flex flex-col gap-3">
-        ${button('touch-reload', '⟳', 'h-14 w-14', 'text-xl')}
         ${button('touch-swap', '⇄', 'h-14 w-14', 'text-xl')}
+        ${button('touch-reload', '⟳', 'h-14 w-14', 'text-xl')}
       </div>
       <div class="flex flex-col gap-3">
-        ${button('touch-ability', 'ABL', 'h-16 w-16', 'text-xs')}
+        ${button('touch-ability', 'ABL', 'h-16 w-16', 'text-[11px]')}
         ${button('touch-fire', 'FIRE', 'h-24 w-24', 'text-sm')}
       </div>
     </div>`
@@ -51,7 +76,11 @@ export function mountTouchControls(actions: InputActions): void {
 
   const stick = root.querySelector<HTMLElement>('#touch-stick')
   const nub = root.querySelector<HTMLElement>('#touch-nub')
-  if (!stick || !nub) return
+  const fire = root.querySelector<HTMLElement>('#touch-fire')
+  const ability = root.querySelector<HTMLElement>('#touch-ability')
+  const reload = root.querySelector<HTMLElement>('#touch-reload')
+  const swap = root.querySelector<HTMLElement>('#touch-swap')
+  if (!stick || !nub || !fire || !ability || !reload || !swap) return
 
   let stickPointer: number | null = null
 
@@ -72,24 +101,21 @@ export function mountTouchControls(actions: InputActions): void {
     const dx = e.clientX - (rect.left + rect.width / 2)
     const dy = e.clientY - (rect.top + rect.height / 2)
     const len = Math.hypot(dx, dy)
-    const clamped = Math.min(1, len / STICK_RADIUS)
+    const pull = Math.min(1, len / STICK_RADIUS)
     const ux = len > 0 ? dx / len : 0
     const uy = len > 0 ? dy / len : 0
-    setNub(ux * clamped * STICK_RADIUS, uy * clamped * STICK_RADIUS)
-    if (clamped < DEAD_ZONE) {
-      touchStick.active = false
-      touchStick.x = 0
-      touchStick.y = 0
-      return
-    }
-    touchStick.active = true
-    touchStick.x = ux * clamped
-    touchStick.y = uy * clamped
+    setNub(ux * pull * STICK_RADIUS, uy * pull * STICK_RADIUS)
+    touchStick.active = pull >= DEAD_ZONE
+    touchStick.x = touchStick.active ? ux * pull : 0
+    touchStick.y = touchStick.active ? uy * pull : 0
   }
 
   stick.addEventListener('pointerdown', (e) => {
     e.preventDefault()
+    e.stopPropagation()
     stickPointer = e.pointerId
+    touchStick.engaged = true
+    // Capture keeps the drag alive once the thumb slides past the well.
     stick.setPointerCapture(e.pointerId)
     drag(e)
   })
@@ -98,51 +124,55 @@ export function mountTouchControls(actions: InputActions): void {
     e.preventDefault()
     drag(e)
   })
-  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
-    stick.addEventListener(type, (e) => {
-      if (stickPointer !== e.pointerId) return
-      release()
-    })
-  }
+  // No pointerleave here: capture already routes the drag, and a leave while
+  // captured would drop the stick the moment the thumb crosses the ring.
+  stick.addEventListener('pointerup', release)
+  stick.addEventListener('pointercancel', release)
+  stick.addEventListener('lostpointercapture', release)
 
-  const fire = root.querySelector<HTMLElement>('#touch-fire')
-  fire?.addEventListener('pointerdown', (e) => {
-    e.preventDefault()
-    if (!actions.canShoot()) return
-    keysPressed.shooting = true
-    actions.p1Shot()
-  })
-  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
-    fire?.addEventListener(type, () => {
+  hold(
+    fire,
+    () => {
+      touchStick.engaged = true
+      keysPressed.shooting = true
+      actions.p1Shot()
+    },
+    () => {
       keysPressed.shooting = false
-    })
-  }
-
-  const tap = (id: string, run: () => void) => {
-    root.querySelector<HTMLElement>(`#${id}`)?.addEventListener('pointerdown', (e) => {
-      e.preventDefault()
-      run()
-    })
-  }
-  tap('touch-ability', () => {
-    // Held while pressed so the ability button doubles as the crate retrieve.
-    keysPressed.interactP1 = true
-    actions.p1Ability()
-  })
-  for (const type of ['pointerup', 'pointercancel', 'pointerleave'] as const) {
-    root.querySelector<HTMLElement>('#touch-ability')?.addEventListener(type, () => {
+    },
+  )
+  hold(
+    ability,
+    () => {
+      touchStick.engaged = true
+      // Held while pressed so the button doubles as the crate retrieve.
+      keysPressed.interactP1 = true
+      keysPressed.interact = true
+      actions.p1Ability()
+    },
+    () => {
       keysPressed.interactP1 = false
-    })
-  }
-  tap('touch-reload', () => actions.reload())
-  tap('touch-swap', () => actions.p1Switch())
+      keysPressed.interact = false
+    },
+  )
+  hold(reload, () => actions.reload())
+  hold(swap, () => actions.p1Switch())
 
-  // Only a mission needs the pad; menus and cabinets keep the screen clear.
+  // Shown whenever a mission is live on a device that can be touched; a
+  // ?touch=1 query forces it on for desktop checks.
+  const forced = new URLSearchParams(window.location.search).has('touch')
+  const wanted = () => (forced || isTouchDevice()) && actions.canShoot()
   const sync = () => {
-    const playing = actions.canShoot()
-    root.classList.toggle('hidden', !playing)
-    if (!playing) release()
+    const show = wanted()
+    if (show === !root.classList.contains('hidden')) return
+    root.classList.toggle('hidden', !show)
+    if (!show) {
+      release()
+      keysPressed.shooting = false
+      keysPressed.interactP1 = false
+      keysPressed.interact = false
+    }
   }
   sync()
-  window.setInterval(sync, 250)
+  window.setInterval(sync, 200)
 }

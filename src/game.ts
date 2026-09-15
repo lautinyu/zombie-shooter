@@ -2223,13 +2223,15 @@ export class Game {
       if (p.mag === 0) this.startReload(p)
     } else if (steered) {
       p.shooting = keysPressed.shooting
-    } else if (p.id === 1 && touchStick.active) {
+    } else if (p.id === 1 && touchStick.engaged) {
       // No mouse on a touchscreen: the muzzle tracks the nearest threat, and
       // falls back to the direction the thumb is pushing.
       const mark = this.nearestEnemyTo(p, 1200)
       p.angle = mark
         ? Math.atan2(mark.y - p.y, mark.x - p.x)
-        : Math.atan2(touchStick.y, touchStick.x)
+        : touchStick.active
+          ? Math.atan2(touchStick.y, touchStick.x)
+          : p.angle
       p.shooting = keysPressed.shooting
     } else {
       this.mouseWorld.x = this.mouseScreen.x / this.zoom + this.camera.x
