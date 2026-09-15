@@ -5785,7 +5785,8 @@ export class Game {
     const mw = 240
     const mh = (mw * m.height) / m.width
     const mx = this.viewW - mw - 20
-    const my = this.viewH - mh - 20
+    // The touch pad owns the bottom corners, so the map moves out of its way.
+    const my = touchStick.visible ? 20 : this.viewH - mh - 20
     const s = mw / m.width
 
     ctx.save()

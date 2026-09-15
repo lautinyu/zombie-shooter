@@ -13,7 +13,7 @@ import { keysPressed } from './input'
  * once the pad has been touched so aiming keeps auto-tracking after the thumb
  * lifts, since a touchscreen has no mouse cursor to fall back on.
  */
-export const touchStick = { active: false, engaged: false, x: 0, y: 0 }
+export const touchStick = { active: false, engaged: false, visible: false, x: 0, y: 0 }
 
 /** Radius of the stick well in CSS pixels; a full push sits on the edge. */
 const STICK_RADIUS = 64
@@ -166,6 +166,9 @@ export function mountTouchControls(actions: InputActions): void {
     const show = wanted()
     if (show === !root.classList.contains('hidden')) return
     root.classList.toggle('hidden', !show)
+    touchStick.visible = show
+    // The keyboard hint strip sits exactly under the thumbstick.
+    document.getElementById('hud-controls')?.classList.toggle('hidden', show)
     if (!show) {
       release()
       keysPressed.shooting = false
