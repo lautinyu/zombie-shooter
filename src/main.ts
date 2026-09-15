@@ -16,6 +16,7 @@ import {
 } from './missions'
 import type { ChapterId, Mission, PathInfo } from './missions'
 import { RadarChart } from './radar'
+import { APP_VERSION } from './version'
 import {
   chapterFourWeapons,
   chapterThreeWeapons,
@@ -154,6 +155,8 @@ app.innerHTML = `
       </div>
     </div>
 
+    <div class="menu-version absolute bottom-2 left-1/2 -translate-x-1/2 rounded bg-black/50 px-2 py-0.5 font-mono text-[10px] font-bold text-slate-400"></div>
+
     <div id="hud-controls" class="absolute left-5 bottom-5 rounded-md bg-black/50 px-3 py-2 text-[11px] leading-relaxed text-slate-400">
       WASD / Arrows to move · Mouse to aim · Left click to shoot · R to reload
     </div>
@@ -174,6 +177,7 @@ app.innerHTML = `
     <header class="sticky top-0 z-50 shrink-0 border-b border-white/10 bg-slate-950/90 px-6 pb-3 pt-4 backdrop-blur-md">
       <div class="mx-auto w-full max-w-4xl">
         <h1 class="text-center text-4xl font-black tracking-tight text-emerald-400 drop-shadow">ZOMBIE SHOOTER</h1>
+        <div class="menu-version absolute left-6 top-5 font-mono text-xs font-bold text-slate-500"></div>
         <button id="profile-chip" class="absolute right-6 top-4 flex items-center gap-2 rounded-full bg-white/5 py-1.5 pl-2 pr-4 text-sm font-bold text-slate-200 ring-1 ring-white/15 hover:bg-white/10" title="Profile / Settings">
           <span id="profile-avatar" class="text-xl leading-none">🧟</span>
           <span id="profile-name-label">Set Profile</span>
@@ -325,6 +329,8 @@ const profile = loadProfile()
 const radar = new RadarChart(el<HTMLCanvasElement>('radar'), 280)
 
 const campaignEl = el('campaign')
+
+for (const tag of document.querySelectorAll('.menu-version')) tag.textContent = APP_VERSION
 
 let currentMission: Mission = MISSIONS[0]
 /** Which chapter's mission board the menu is showing. */

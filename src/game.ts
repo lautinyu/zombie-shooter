@@ -28,7 +28,7 @@ import { extractionField, flowDirection, goalField } from './nav'
 import type { FlowField } from './nav'
 import { drawCharacterSkin } from './skins'
 import { bindInput, clearInput, keysPressed } from './input'
-import { touchStick } from './TouchControls'
+import { touchAim, touchStick } from './TouchControls'
 import { settings } from './settings'
 import { AOE_TICK_COOLDOWN, AOE_TICK_DAMAGE, AoeTicker, aoeTickCount } from './aoe'
 import { HazardManager, OIL_FRICTION_LOSS, OIL_SLIDE_TIME, buildHazards } from './HazardManager'
@@ -2224,14 +2224,8 @@ export class Game {
     } else if (steered) {
       p.shooting = keysPressed.shooting
     } else if (p.id === 1 && touchStick.engaged) {
-      // No mouse on a touchscreen: the muzzle tracks the nearest threat, and
-      // falls back to the direction the thumb is pushing.
-      const mark = this.nearestEnemyTo(p, 1200)
-      p.angle = mark
-        ? Math.atan2(mark.y - p.y, mark.x - p.x)
-        : touchStick.active
-          ? Math.atan2(touchStick.y, touchStick.x)
-          : p.angle
+      // Touchscreen: the muzzle follows the aim stick only, with no assist.
+      if (touchAim.active) p.angle = touchAim.angle
       p.shooting = keysPressed.shooting
     } else {
       this.mouseWorld.x = this.mouseScreen.x / this.zoom + this.camera.x

@@ -1,19 +1,28 @@
 /**
  * On-screen controls for phones and tablets: an analogue thumbstick on the
- * left for movement, action buttons on the right. The stick writes into
- * `touchStick`, which the game reads instead of the movement keys, and the
- * buttons drive the same action callbacks the keyboard uses.
+ * left for movement, a manual aim stick plus action buttons on the right.
+ * The sticks write into `touchStick` / `touchAim`, which the game reads
+ * instead of the movement keys and the mouse, and the buttons drive the same
+ * action callbacks the keyboard uses. Aiming is never assisted.
  */
 
 import type { InputActions } from './input'
 import { keysPressed } from './input'
 
 /**
- * Live pad state. `x`/`y` are clamped to a unit circle; `engaged` stays true
- * once the pad has been touched so aiming keeps auto-tracking after the thumb
- * lifts, since a touchscreen has no mouse cursor to fall back on.
+ * Live movement pad state. `x`/`y` are clamped to a unit circle; `engaged`
+ * stays true once the pad has been touched so the game stops falling back to
+ * the mouse, which a touchscreen does not have.
  */
 export const touchStick = { active: false, engaged: false, visible: false, x: 0, y: 0 }
+
+/**
+ * Manual aim state written by the right-hand stick. `angle` is a world-space
+ * heading in radians and only ever comes from the player's thumb, so there is
+ * no aim assist of any kind. Pushing the stick past the dead zone also holds
+ * the trigger, which is what makes twin-stick play work without a third thumb.
+ */
+export const touchAim = { active: false, engaged: false, angle: 0 }
 
 /** Radius of the stick well in CSS pixels; a full push sits on the edge. */
 const STICK_RADIUS = 64
@@ -66,21 +75,25 @@ export function mountTouchControls(actions: InputActions): void {
       <div class="flex flex-col gap-3">
         ${button('touch-swap', '⇄', 'h-14 w-14', 'text-xl')}
         ${button('touch-reload', '⟳', 'h-14 w-14', 'text-xl')}
+        ${button('touch-ability', 'ABL', 'h-14 w-14', 'text-[11px]')}
+        ${button('touch-fire', 'FIRE', 'h-16 w-16', 'text-xs')}
       </div>
-      <div class="flex flex-col gap-3">
-        ${button('touch-ability', 'ABL', 'h-16 w-16', 'text-[11px]')}
-        ${button('touch-fire', 'FIRE', 'h-24 w-24', 'text-sm')}
+      <div id="touch-aim" class="pointer-events-auto relative h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
+        <div class="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-black uppercase tracking-wider text-white/40">Aim</div>
+        <div id="touch-aim-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-400/50 ring-2 ring-rose-200/70"></div>
       </div>
     </div>`
   document.body.appendChild(root)
 
   const stick = root.querySelector<HTMLElement>('#touch-stick')
   const nub = root.querySelector<HTMLElement>('#touch-nub')
+  const aim = root.querySelector<HTMLElement>('#touch-aim')
+  const aimNub = root.querySelector<HTMLElement>('#touch-aim-nub')
   const fire = root.querySelector<HTMLElement>('#touch-fire')
   const ability = root.querySelector<HTMLElement>('#touch-ability')
   const reload = root.querySelector<HTMLElement>('#touch-reload')
   const swap = root.querySelector<HTMLElement>('#touch-swap')
-  if (!stick || !nub || !fire || !ability || !reload || !swap) return
+  if (!stick || !nub || !aim || !aimNub || !fire || !ability || !reload || !swap) return
 
   let stickPointer: number | null = null
 
@@ -130,15 +143,68 @@ export function mountTouchControls(actions: InputActions): void {
   stick.addEventListener('pointercancel', release)
   stick.addEventListener('lostpointercapture', release)
 
+  let aimPointer: number | null = null
+
+  const setAimNub = (dx: number, dy: number) => {
+    aimNub.style.transform = `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px))`
+  }
+
+  const releaseAim = () => {
+    aimPointer = null
+    // The muzzle keeps its last heading; only the trigger lets go.
+    touchAim.active = false
+    keysPressed.shooting = false
+    setAimNub(0, 0)
+  }
+
+  const dragAim = (e: PointerEvent) => {
+    const rect = aim.getBoundingClientRect()
+    const dx = e.clientX - (rect.left + rect.width / 2)
+    const dy = e.clientY - (rect.top + rect.height / 2)
+    const len = Math.hypot(dx, dy)
+    const pull = Math.min(1, len / STICK_RADIUS)
+    const ux = len > 0 ? dx / len : 0
+    const uy = len > 0 ? dy / len : 0
+    setAimNub(ux * pull * STICK_RADIUS, uy * pull * STICK_RADIUS)
+    if (pull < DEAD_ZONE) {
+      touchAim.active = false
+      keysPressed.shooting = false
+      return
+    }
+    touchAim.active = true
+    touchAim.angle = Math.atan2(uy, ux)
+    keysPressed.shooting = true
+  }
+
+  aim.addEventListener('pointerdown', (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    aimPointer = e.pointerId
+    touchStick.engaged = true
+    touchAim.engaged = true
+    aim.setPointerCapture(e.pointerId)
+    dragAim(e)
+  })
+  aim.addEventListener('pointermove', (e) => {
+    if (aimPointer !== e.pointerId) return
+    e.preventDefault()
+    dragAim(e)
+  })
+  aim.addEventListener('pointerup', releaseAim)
+  aim.addEventListener('pointercancel', releaseAim)
+  aim.addEventListener('lostpointercapture', releaseAim)
+
   hold(
     fire,
     () => {
       touchStick.engaged = true
+      touchAim.engaged = true
       keysPressed.shooting = true
       actions.p1Shot()
     },
     () => {
-      keysPressed.shooting = false
+      // The aim stick may still be pushed, so only it can clear its own hold.
+      if (!touchAim.active) keysPressed.shooting = false
     },
   )
   hold(
@@ -171,6 +237,7 @@ export function mountTouchControls(actions: InputActions): void {
     document.getElementById('hud-controls')?.classList.toggle('hidden', show)
     if (!show) {
       release()
+      releaseAim()
       keysPressed.shooting = false
       keysPressed.interactP1 = false
       keysPressed.interact = false
