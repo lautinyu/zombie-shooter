@@ -43,6 +43,7 @@ import { CHEAT_CURRENCY, bindCheatCodes } from './cheats'
 import { mountArcade } from './arcade'
 import { mountVoidBlast } from './voidblast'
 import { mountEndlessGauntlet } from './EndlessGauntlet'
+import { mountFightingArcade } from './FightingArcade'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
 import { onSettingsChange } from './settings'
@@ -1059,11 +1060,13 @@ function leaveCabinet() {
 const arcade = mountArcade(leaveCabinet)
 const voidBlast = mountVoidBlast(leaveCabinet)
 const gauntlet = mountEndlessGauntlet(leaveCabinet)
+const rotFighter = mountFightingArcade(leaveCabinet)
 
 const CABINETS: Record<ArcadeGameId, () => void> = {
   'crimson-highway': () => arcade.open(),
   'void-blast': () => voidBlast.open(),
   'endless-gauntlet': () => gauntlet.open(),
+  'rot-fighter': () => rotFighter.open(),
 }
 
 const arcadeHub = mountArcadeHub(

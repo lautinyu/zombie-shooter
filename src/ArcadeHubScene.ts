@@ -47,6 +47,15 @@ const CARDS: CabinetCard[] = [
     text: 'text-amber-300',
     glow: 'hover:shadow-[0_0_40px_rgba(245,158,11,0.45)]',
   },
+  {
+    id: 'rot-fighter',
+    title: 'Rot Fighter',
+    tag: 'Versus fighter · 1P ladder / 2P',
+    blurb: 'Light, heavy, special and guard. Spacing wins, mashing loses.',
+    ring: 'ring-lime-500/60 hover:ring-lime-300',
+    text: 'text-lime-300',
+    glow: 'hover:shadow-[0_0_40px_rgba(132,204,22,0.45)]',
+  },
 ]
 
 export interface ArcadeHub {
@@ -82,7 +91,7 @@ export function mountArcadeHub(
       </div>
       <button id="arcade-hub-back" class="rounded-lg bg-cyan-500/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-200 ring-1 ring-cyan-400/60 hover:bg-cyan-500/30">← Back to Main Menu</button>
     </div>
-    <div id="arcade-hub-cards" class="grid gap-4 pt-6 sm:grid-cols-3"></div>
+    <div id="arcade-hub-cards" class="grid gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-4"></div>
   `
 
   overlay.appendChild(shell)

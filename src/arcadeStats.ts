@@ -3,19 +3,25 @@
  * played, and the gauntlet's own distance/kill ledger.
  */
 
-export type ArcadeGameId = 'crimson-highway' | 'void-blast' | 'endless-gauntlet'
+export type ArcadeGameId =
+  | 'crimson-highway'
+  | 'void-blast'
+  | 'endless-gauntlet'
+  | 'rot-fighter'
 
 /** High score keys predate this module, so their names are kept as-is. */
 const HIGH_SCORE_KEYS: Record<ArcadeGameId, string> = {
   'crimson-highway': 'crimson-highway-highscore-v1',
   'void-blast': 'void-blast-highscore-v1',
   'endless-gauntlet': 'endless-gauntlet-highscore-v1',
+  'rot-fighter': 'rot-fighter-highscore-v1',
 }
 
 const PLAY_COUNT_KEYS: Record<ArcadeGameId, string> = {
   'crimson-highway': 'crimson-highway-plays-v1',
   'void-blast': 'void-blast-plays-v1',
   'endless-gauntlet': 'endless-gauntlet-plays-v1',
+  'rot-fighter': 'rot-fighter-plays-v1',
 }
 
 export const GAUNTLET_STATS_KEY = 'ZOMBIE_ARCADE_GAUNTLET_STATS'
