@@ -808,8 +808,8 @@ const BOSS_REVEAL_TIME = 3.6
 const ARENA_TIME = 480
 /** Seconds between field-upgrade drops. */
 const ARENA_DROP_INTERVAL = 60
-/** The Crucible rifle hits 20% harder than the stock Old Rifle. */
-const ARENA_RIFLE_BONUS = 1.2
+/** The Crucible rifle hits 50% harder than the stock Old Rifle. */
+const ARENA_RIFLE_BONUS = 1.5
 /** Ally shots take a flat 5% of a zombie's full health; 20 shots kills it. */
 const ALLY_DAMAGE_FRACTION = 0.05
 const ALLY_FIRE_INTERVAL = 0.4
@@ -874,7 +874,7 @@ function arenaLoadout(loadout: Weapon[]): Weapon[] {
     ...base,
     name: 'Reinforced Rifle',
     damage: base.damage * ARENA_RIFLE_BONUS,
-    description: 'Crucible issue: the same old action with 20% more punch behind it.',
+    description: 'Crucible issue: the same old action with 50% more punch behind it.',
   }
   return [rifle, ...loadout.slice(1)]
 }
