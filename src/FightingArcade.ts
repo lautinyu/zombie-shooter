@@ -187,8 +187,8 @@ const ROSTER: Character[] = [
     speed: 1,
     attackSpeed: 1,
     hpScale: 1,
-    dodge: 0.07,
-    trait: '7% CHANCE TO EVADE A HIT',
+    dodge: 0.15,
+    trait: '15% CHANCE TO EVADE A HIT',
   },
 ]
 
@@ -329,19 +329,19 @@ const KEYS: Record<1 | 2, Record<ActionId, string[]>> = {
     left: ['a'],
     right: ['d'],
     jump: ['w'],
-    block: [' ', 'i', 's'],
-    light: ['j'],
-    heavy: ['k'],
-    special: ['l'],
+    block: ['4', 's'],
+    light: ['1'],
+    heavy: ['2'],
+    special: ['3'],
   },
   2: {
     left: ['arrowleft'],
     right: ['arrowright'],
     jump: ['arrowup'],
-    block: ['arrowdown', '0'],
-    light: ['1'],
-    heavy: ['2'],
-    special: ['3'],
+    block: [';', 'arrowdown'],
+    light: ['j'],
+    heavy: ['k'],
+    special: ['l'],
   },
 }
 
@@ -369,7 +369,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const legend = document.createElement('div')
   legend.className = 'pt-3 text-center text-[11px] uppercase tracking-[0.2em] text-slate-500'
   legend.textContent =
-    'P1 A/D move · W jump · J light · K heavy · L special · Space/I block   ·   P2 ←→ · ↑ jump · 1 2 3 · ↓/0 block'
+    'P1 WASD move · 1 light · 2 heavy · 3 special · 4 block   ·   P2 arrows · J light · K heavy · L special · ; block'
   overlay.appendChild(legend)
 
   const pad = buildTouchPad()
@@ -464,6 +464,9 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const startSelect = (pvp: boolean) => {
     versus = pvp
     locked = [false, false]
+    // The keypress that opened select must not also count as a lock-in.
+    pressed.clear()
+    pad.clearTaps()
     phase = 'select'
     phaseTimer = 0
     playSfx('swap')
@@ -1060,7 +1063,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     })
 
     retroText(
-      versus ? 'P1 A/D + J TO LOCK  ·  P2 ←→ + 1 TO LOCK' : 'A/D TO MOVE  ·  J OR ENTER TO LOCK IN',
+      versus ? 'P1 A/D + 1 TO LOCK  ·  P2 ←→ + J TO LOCK' : 'A/D TO MOVE  ·  1 OR ENTER TO LOCK IN',
       384,
       16,
       '#e2e8f0',
@@ -1139,8 +1142,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       retroText('INSERT COIN', 196, 28, '#fcd34d', true)
       retroText('[1] ARCADE — PLAYER VS CPU LADDER', 260, 22, '#e2e8f0')
       retroText('[2] VERSUS — LOCAL 2 PLAYER', 296, 22, '#e2e8f0')
-      retroText('P1  A/D MOVE · W JUMP · J LIGHT · K HEAVY · L SPECIAL · SPACE/I BLOCK', 360, 15, '#94a3b8')
-      retroText('P2  ARROWS MOVE/JUMP · 1 LIGHT · 2 HEAVY · 3 SPECIAL · ↓/0 BLOCK', 384, 15, '#94a3b8')
+      retroText('P1  WASD MOVE/JUMP · 1 LIGHT · 2 HEAVY · 3 SPECIAL · 4 BLOCK', 360, 15, '#94a3b8')
+      retroText('P2  ARROWS MOVE/JUMP · J LIGHT · K HEAVY · L SPECIAL · ; BLOCK', 384, 15, '#94a3b8')
       retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 418, 14, '#65a30d')
       retroText('6 STAGES — SURVIVE TO THE ROT SOVEREIGN', 442, 14, '#f43f5e')
     }
