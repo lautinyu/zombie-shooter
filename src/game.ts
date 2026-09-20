@@ -679,8 +679,11 @@ const TURRET_DAMAGE = 9
 const TURRET_LIFETIME = 30
 const OVERDRIVE_SPEED = 1.2
 const OVERDRIVE_DAMAGE = 1.5
-const MEDKIT_HEAL_FRACTION = 0.5
+/** A medkit restores a flat 27 HP and scrubs one sting off the taker. */
+const MEDKIT_HEAL = 27
 const MEDKIT_ARM_TIME = 0.8
+/** Seconds between field medkit drops. */
+const MEDKIT_SPAWN_INTERVAL = 40
 const BARRICADE_HP = 260
 const BARRICADE_W = 130
 const BARRICADE_H = 26
@@ -921,6 +924,8 @@ export class Game {
   private survivors: Survivor[] = []
   private turrets: Turret[] = []
   private medkits: Medkit[] = []
+  /** Counts up to the next timed medkit drop. */
+  private medkitTimer = 0
   private boss: Boss | null = null
   private gibs: Gib[] = []
   /**
@@ -1197,6 +1202,7 @@ export class Game {
     this.ammoBoxes = []
     this.turrets = []
     this.medkits = []
+    this.medkitTimer = 0
     this.barricades = []
     this.venom = []
     this.shards = []
@@ -3900,20 +3906,38 @@ export class Game {
       }
     }
 
+    this.updateMedkitDrops(dt)
+
     for (let i = this.medkits.length - 1; i >= 0; i--) {
       const kit = this.medkits[i]
       kit.arm = Math.max(0, kit.arm - dt)
       if (kit.arm > 0) continue
+      // A stung player still wants the kit even on full health.
       const taker = this.alivePlayers.find(
-        (p) => p.hp < p.maxHp && Math.hypot(kit.x - p.x, kit.y - p.y) < p.r + 16
+        (p) =>
+          (p.hp < p.maxHp || p.stings > 0) && Math.hypot(kit.x - p.x, kit.y - p.y) < p.r + 16
       )
       if (taker) {
-        taker.hp = Math.round(
-          Math.min(taker.maxHp, taker.hp + (taker.maxHp - taker.hp) * MEDKIT_HEAL_FRACTION)
-        )
+        taker.hp = Math.round(Math.min(taker.maxHp, taker.hp + MEDKIT_HEAL))
+        taker.stings = Math.max(0, taker.stings - 1)
         this.medkits.splice(i, 1)
+        playSfx('medkit')
       }
     }
+  }
+
+  /** Drops a fresh medkit somewhere in the field every 40 seconds. */
+  private updateMedkitDrops(dt: number) {
+    if (!this.mission || this.railMode) return
+    this.medkitTimer += dt
+    if (this.medkitTimer < MEDKIT_SPAWN_INTERVAL) return
+    this.medkitTimer = 0
+    // Land it in reach of whoever is playing rather than across the map.
+    const anchor = this.alivePlayers[0] ?? { x: this.map.width / 2, y: this.map.height / 2 }
+    const spot = this.openSpot(16, anchor, 140, 520)
+    this.medkits.push({ x: spot.x, y: spot.y, arm: 0 })
+    this.banner = 'Medkit dropped nearby'
+    this.bannerTimer = 2
   }
 
   private updateSpawning(dt: number) {
