@@ -112,6 +112,8 @@ interface Enemy {
   y: number
   r: number
   hp: number
+  /** Health it spawned with, for percentage-based damage like ally fire. */
+  maxHp: number
   speed: number
   attackCooldown: number
   wobble: number
@@ -291,6 +293,38 @@ interface Medkit {
   arm: number
 }
 
+/** The five field upgrades the Crucible drops, one choice per minute. */
+type ArenaPerkId = 'ally' | 'lifesteal' | 'haste' | 'armour' | 'explosive'
+
+interface ArenaPerk {
+  id: ArenaPerkId
+  name: string
+  blurb: string
+  color: string
+}
+
+/** One of the two upgrades on offer in a drop; taking either clears both. */
+interface Powerup {
+  x: number
+  y: number
+  r: number
+  perk: ArenaPerk
+  /** Drop wave the pair belongs to, so the twin despawns with it. */
+  wave: number
+  pulse: number
+}
+
+/** An automated companion gun that answers to nobody and shoots forever. */
+interface Ally {
+  x: number
+  y: number
+  r: number
+  angle: number
+  cooldown: number
+  /** Decays after a shot, drawing the muzzle kick. */
+  recoil: number
+}
+
 interface Barricade {
   x: number
   y: number
@@ -400,6 +434,8 @@ interface Bullet {
   color: string
   width: number
   hit: Set<Enemy>
+  /** Who fired it, so Crucible lifesteal knows where to send the health. */
+  owner: Player | null
   maxLife: number
   falloff: number
   tracerLength: number
@@ -768,6 +804,81 @@ const BOSS_PHASES = 2
 /** How close a player must get to the hive centre to trigger the reveal. */
 const BOSS_REVEAL_RANGE = 320
 const BOSS_REVEAL_TIME = 3.6
+/** Chapter 4's Crucible: eight minutes of swarm, then the Colossus. */
+const ARENA_TIME = 480
+/** Seconds between field-upgrade drops. */
+const ARENA_DROP_INTERVAL = 60
+/** The Crucible rifle hits 20% harder than the stock Old Rifle. */
+const ARENA_RIFLE_BONUS = 1.2
+/** Ally shots take a flat 5% of a zombie's full health; 20 shots kills it. */
+const ALLY_DAMAGE_FRACTION = 0.05
+const ALLY_FIRE_INTERVAL = 0.4
+const ALLY_RANGE = 460
+const ALLY_FOLLOW_DISTANCE = 70
+const ALLY_SPEED = 210
+/** Baseline zombie health, used to size the drone's chip damage on a boss. */
+const ARENA_ZOMBIE_HP = 60
+/** Each lifesteal stack returns 0.2% of the damage dealt as health. */
+const ARENA_LIFESTEAL = 0.002
+/** Each armour stack soaks 15% of every hit taken. */
+const ARENA_ARMOUR = 0.15
+/** Each explosive stack splashes 10% of the hit onto everything nearby. */
+const ARENA_SPLASH = 0.1
+const ARENA_SPLASH_RADIUS = 90
+/** Each haste stack adds 15% movement speed and 15% rate of fire. */
+const ARENA_HASTE = 0.15
+
+const ARENA_PERKS: ArenaPerk[] = [
+  {
+    id: 'ally',
+    name: 'Support Drone Ally',
+    blurb: 'An automated gun that kills a zombie in about 8 seconds',
+    color: '#38bdf8',
+  },
+  {
+    id: 'lifesteal',
+    name: 'Leech Coupling',
+    blurb: '+0.2% of all damage dealt returned as health',
+    color: '#f87171',
+  },
+  {
+    id: 'haste',
+    name: 'Kinetic Servos',
+    blurb: '+15% movement speed and +15% fire rate',
+    color: '#fbbf24',
+  },
+  {
+    id: 'armour',
+    name: 'Armour Plating',
+    blurb: 'Incoming damage reduced by 15%',
+    color: '#94a3b8',
+  },
+  {
+    id: 'explosive',
+    name: 'Explosive Rounds',
+    blurb: 'Hits splash 10% damage onto nearby infected',
+    color: '#fb923c',
+  },
+]
+
+/** The Colossus: a wall of scrap that closes fast and hits for 25. */
+const COLOSSUS_MAX_HP = 26000
+const COLOSSUS_RADIUS = 62
+const COLOSSUS_SPEED = 118
+const COLOSSUS_CONTACT_DAMAGE = 25
+
+/** Swaps the primary slot for the Crucible's up-gunned rifle. */
+function arenaLoadout(loadout: Weapon[]): Weapon[] {
+  const base = weaponById('old-rifle')
+  const rifle: Weapon = {
+    ...base,
+    name: 'Reinforced Rifle',
+    damage: base.damage * ARENA_RIFLE_BONUS,
+    description: 'Crucible issue: the same old action with 20% more punch behind it.',
+  }
+  return [rifle, ...loadout.slice(1)]
+}
+
 const BOSS_REVEAL_LINES: Record<BossKind, string> = {
   'hive-mother': "There she is... the source of the infection. Eyes up, let's take it down!",
   'brood-matron': "There she is... the roof belongs to her brood. Eyes up, let's take it down!",
@@ -776,6 +887,7 @@ const BOSS_REVEAL_LINES: Record<BossKind, string> = {
   'cryo-stalker': "It's out of the pod — keep moving, that frost wave will pin you down!",
   'canopy-leviathan':
     'Break the four crystals first — it heals off them faster than we can shoot!',
+  'rust-colossus': 'Eight minutes up — that thing is walking out of the salt. Do not let it reach you!',
 }
 
 export class Game {
@@ -853,6 +965,21 @@ export class Game {
   private raceEscaped = false
   /** Seconds left on a Hold the Line siege. */
   private holdTimer = 0
+  /** Seconds survived in the Crucible, counting up to the boss drop. */
+  private arenaTimer = 0
+  /** Field upgrades taken this run, by id; every one of them stacks. */
+  private arenaPerks: Record<ArenaPerkId, number> = {
+    ally: 0,
+    lifesteal: 0,
+    haste: 0,
+    armour: 0,
+    explosive: 0,
+  }
+  private powerups: Powerup[] = []
+  private allies: Ally[] = []
+  /** Number of minute drops already offered. */
+  private arenaDrops = 0
+  private arenaBossSpawned = false
   private mutation: Mutation | null = null
   private mutationTimer = MUTATION_INTERVAL
   /** Seconds left on the "Virus Mutating!" HUD alert. */
@@ -1086,6 +1213,12 @@ export class Game {
     this.blasts = []
     this.flameZones = []
     this.holdTimer = mission.holdTime ?? 0
+    this.arenaTimer = 0
+    this.arenaDrops = 0
+    this.arenaBossSpawned = false
+    this.arenaPerks = { ally: 0, lifesteal: 0, haste: 0, armour: 0, explosive: 0 }
+    this.powerups = []
+    this.allies = []
     this.mutation = null
     this.mutationTimer = MUTATION_INTERVAL
     this.mutationAlert = 0
@@ -1143,7 +1276,8 @@ export class Game {
           : this.openSpot(PLAYER_RADIUS + 10, centre, 0, 420)
       const spawn =
         i === 0 ? solo : this.openSpot(PLAYER_RADIUS + 10, this.players[0], 50, 180)
-      this.players.push(this.makePlayer(id, spawn.x, spawn.y, loadout, c, id === 2))
+      const kit = mission.type === 'arena' ? arenaLoadout(loadout) : loadout
+      this.players.push(this.makePlayer(id, spawn.x, spawn.y, kit, c, id === 2))
     })
 
     this.survivors = []
@@ -1269,6 +1403,13 @@ export class Game {
         r: LEVIATHAN_RADIUS,
         hp: LEVIATHAN_MAX_HP,
         speed: LEVIATHAN_SPEED,
+      },
+      'rust-colossus': {
+        name: 'The Rust Colossus',
+        title: 'Scrapyard Titan',
+        r: COLOSSUS_RADIUS,
+        hp: COLOSSUS_MAX_HP,
+        speed: COLOSSUS_SPEED,
       },
     }
     const s = stats[kind]
@@ -1401,7 +1542,12 @@ export class Game {
       hold:
         mission?.type === 'hold'
           ? { time: Math.max(0, this.holdTimer), total: mission.holdTime ?? 0 }
-          : null,
+          : mission?.type === 'arena' && !this.arenaBossSpawned
+            ? {
+                time: Math.max(0, (mission.arenaTime ?? ARENA_TIME) - this.arenaTimer),
+                total: mission.arenaTime ?? ARENA_TIME,
+              }
+            : null,
       generator: this.generator
         ? { hp: Math.max(0, Math.round(this.generator.hp)), maxHp: this.generator.maxHp }
         : null,
@@ -1494,6 +1640,7 @@ export class Game {
     this.updateHives(dt)
     this.updateCrates(dt)
     this.updateRace()
+    this.updateArena(dt)
     this.updateMutation(dt)
     if (this.generator) this.generator.hurt = Math.max(0, this.generator.hurt - dt)
     if (this.mission?.type === 'hold') this.holdTimer = Math.max(0, this.holdTimer - dt)
@@ -1516,7 +1663,7 @@ export class Game {
         ...this.alivePlayers.map((p) => ({
           body: p,
           hurt: (amount: number) => {
-            p.hp -= amount
+            this.damagePlayer(p, amount)
             p.hurtCooldown = 0.2
             p.safeTimer = 0
           },
@@ -1655,7 +1802,7 @@ export class Game {
         }
         const damage = pool.ticker.tick(p, dt)
         if (!damage) continue
-        p.hp -= damage
+        this.damagePlayer(p, damage)
         p.hurtCooldown = 0.25
         p.safeTimer = 0
       }
@@ -1804,6 +1951,13 @@ export class Game {
         total: crystals,
       }
     }
+    if (type === 'arena') {
+      return {
+        label: 'Field upgrades installed',
+        done: Object.values(this.arenaPerks).reduce((a, b) => a + b, 0),
+        total: Math.floor((this.mission?.arenaTime ?? ARENA_TIME) / ARENA_DROP_INTERVAL),
+      }
+    }
     if (type === 'overgrowth') {
       return {
         label: 'Spore Hives destroyed',
@@ -1892,6 +2046,13 @@ export class Game {
       }
     } else if (mission.type === 'supply') {
       if (this.crates.length && this.crates.every((c) => c.collected)) {
+        this.finish('won')
+        return
+      }
+    } else if (mission.type === 'arena') {
+      // The clock alone never ends the Crucible: the Colossus has to fall.
+      if (this.arenaBossSpawned && this.boss && this.boss.hp <= 0) {
+        this.boss = null
         this.finish('won')
         return
       }
@@ -2169,6 +2330,7 @@ export class Game {
     p.chill = Math.max(0, p.chill - dt)
     const step =
       p.speed *
+      this.arenaHaste *
       (boosted ? OVERDRIVE_SPEED : 1) *
       (p.chill > 0 ? CHILL_SLOW : 1) *
       (inMud(this.map, p.x, p.y) ? MUD_SLOW : 1) *
@@ -2469,7 +2631,8 @@ export class Game {
 
   /** Rail convoy weapons cycle 1.5x faster, for the arcade cadence. */
   private fireInterval(p: Player): number {
-    return this.railMode ? p.weapon.fireInterval / RAIL_FIRE_RATE : p.weapon.fireInterval
+    const base = this.railMode ? p.weapon.fireInterval / RAIL_FIRE_RATE : p.weapon.fireInterval
+    return base / this.arenaHaste
   }
 
   private fire(p: Player) {
@@ -2523,6 +2686,7 @@ export class Game {
                     : '#ffe066',
         width: acidShot || cryoShot ? w.tracerWidth + 1 : w.tracerWidth,
         hit: new Set<Enemy>(),
+        owner: p,
       })
     }
     if (!w.infiniteAmmo) p.mag -= 1
@@ -2657,6 +2821,7 @@ export class Game {
       color: '#a78bfa',
       width: 2,
       hit: new Set<Enemy>(),
+      owner: null,
     })
   }
 
@@ -2674,7 +2839,9 @@ export class Game {
       // are measured against the whole step, not just where the bullet landed.
       if (!dead && boss && boss.hp > 0 && segmentDistance(boss.x, boss.y, px, py, b.x, b.y) < boss.r) {
         const travelled = 1 - b.life / b.maxLife
-        boss.hp -= b.damage * (1 - (1 - b.falloff) * travelled)
+        const dealt = b.damage * (1 - (1 - b.falloff) * travelled)
+        boss.hp -= dealt
+        this.arenaOnHit(b, dealt, b.x, b.y, null)
         if (b.blast > 0) dead = true
         boss.hurt = 0.12
         if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
@@ -2714,7 +2881,9 @@ export class Game {
           b.hit.add(e)
           const travelled = 1 - b.life / b.maxLife
           const armour = b.ignoreArmour ? 1 : this.enemyArmour
-          e.hp -= b.damage * (1 - (1 - b.falloff) * travelled) * armour
+          const dealt = b.damage * (1 - (1 - b.falloff) * travelled) * armour
+          e.hp -= dealt
+          this.arenaOnHit(b, dealt, e.x, e.y, e)
           if (b.poison) {
             e.poison = POISON_DURATION
             // Acid needles pile up; a single acidic-spray round does not.
@@ -2840,10 +3009,11 @@ export class Game {
       }
     }
 
-    if (b.phase === 2 && b.dashing <= 0) {
+    // The Colossus charges from the first second, not just when enraged.
+    if ((b.phase === 2 || b.kind === 'rust-colossus') && b.dashing <= 0) {
       b.dashTimer -= dt
       if (b.dashTimer <= 0 && prey) {
-        b.dashTimer = BOSS_DASH_INTERVAL
+        b.dashTimer = b.kind === 'rust-colossus' ? BOSS_DASH_INTERVAL * 0.55 : BOSS_DASH_INTERVAL
         b.dashing = BOSS_DASH_TIME
         b.dashDir = { x: Math.cos(b.angle), y: Math.sin(b.angle) }
         playSfx('boss-dash')
@@ -2853,7 +3023,10 @@ export class Game {
     if (prey && b.attackCooldown === 0) {
       const d = Math.hypot(prey.x - b.x, prey.y - b.y)
       if (d < b.r + prey.r) {
-        prey.hp -= BOSS_CONTACT_DAMAGE
+        this.damagePlayer(
+          prey,
+          b.kind === 'rust-colossus' ? COLOSSUS_CONTACT_DAMAGE : BOSS_CONTACT_DAMAGE
+        )
         prey.hurtCooldown = 0.3
         prey.safeTimer = 0
         b.attackCooldown = 1
@@ -2902,7 +3075,7 @@ export class Game {
     }
 
     if (prey && b.attackCooldown === 0 && Math.hypot(prey.x - b.x, prey.y - b.y) < b.r + prey.r) {
-      prey.hp -= ALPHA_CONTACT_DAMAGE
+      this.damagePlayer(prey, ALPHA_CONTACT_DAMAGE)
       prey.hurtCooldown = 0.3
       prey.safeTimer = 0
       b.attackCooldown = 0.8
@@ -2935,7 +3108,7 @@ export class Game {
           b.x = spot.x
           b.y = spot.y
         }
-        prey.hp -= STALKER_BACKSTAB_DAMAGE
+        this.damagePlayer(prey, STALKER_BACKSTAB_DAMAGE)
         prey.hurtCooldown = 0.4
         prey.safeTimer = 0
         playSfx('boss-dash')
@@ -2963,7 +3136,7 @@ export class Game {
       b.attackCooldown === 0 &&
       Math.hypot(prey.x - b.x, prey.y - b.y) < b.r + prey.r
     ) {
-      prey.hp -= BOSS_CONTACT_DAMAGE
+      this.damagePlayer(prey, BOSS_CONTACT_DAMAGE)
       prey.hurtCooldown = 0.3
       prey.safeTimer = 0
       b.attackCooldown = 1
@@ -3010,7 +3183,7 @@ export class Game {
     }
 
     if (prey && b.attackCooldown === 0 && Math.hypot(prey.x - b.x, prey.y - b.y) < b.r + prey.r) {
-      prey.hp -= BOSS_CONTACT_DAMAGE
+      this.damagePlayer(prey, BOSS_CONTACT_DAMAGE)
       prey.hurtCooldown = 0.3
       prey.safeTimer = 0
       b.attackCooldown = 1
@@ -3038,7 +3211,7 @@ export class Game {
     }
 
     if (prey && b.attackCooldown === 0 && Math.hypot(prey.x - b.x, prey.y - b.y) < b.r + prey.r) {
-      prey.hp -= LEVIATHAN_CONTACT_DAMAGE
+      this.damagePlayer(prey, LEVIATHAN_CONTACT_DAMAGE)
       prey.hurtCooldown = 0.3
       prey.safeTimer = 0
       b.attackCooldown = 1
@@ -3126,7 +3299,7 @@ export class Game {
         }
         const damage = z.ticker.tick(p, dt)
         if (!damage) continue
-        p.hp -= damage
+        this.damagePlayer(p, damage)
         p.hurtCooldown = 0.25
         p.safeTimer = 0
       }
@@ -3148,7 +3321,7 @@ export class Game {
         if (s.hit.includes(p) || this.isCloaked(p)) continue
         if (Math.hypot(p.x - s.x, p.y - s.y) > p.r + s.r) continue
         s.hit.push(p)
-        p.hp -= SHARD_DAMAGE
+        this.damagePlayer(p, SHARD_DAMAGE)
         p.hurtCooldown = 0.2
         p.safeTimer = 0
         playSfx('sting')
@@ -3199,7 +3372,7 @@ export class Game {
       if (burn.timer > 0) continue
       burn.ticksLeft -= 1
       burn.timer = AOE_TICK_COOLDOWN
-      burn.player.hp -= AOE_TICK_DAMAGE
+      this.damagePlayer(burn.player, AOE_TICK_DAMAGE)
       burn.player.hurtCooldown = 0.2
       burn.player.safeTimer = 0
     }
@@ -3232,7 +3405,7 @@ export class Game {
           if (Math.hypot(p.x - v.x, p.y - v.y) > p.r + v.r) continue
           // Venom is a sting: it feeds the infection meter, not just health.
           p.stings += 1
-          p.hp -= VENOM_DAMAGE
+          this.damagePlayer(p, VENOM_DAMAGE)
           p.hurtCooldown = 1.2
           p.safeTimer = 0
           playSfx('sting')
@@ -3488,7 +3661,7 @@ export class Game {
           hunted.hurtCooldown = 0.25
           hunted.safeTimer = 0
         } else if (hunted) {
-          hunted.hp -= 8 * this.damageScale
+          this.damagePlayer(hunted, 8 * this.damageScale)
           z.attackCooldown = 0.7
           hunted.hurtCooldown = 0.25
           hunted.safeTimer = 0
@@ -3511,7 +3684,231 @@ export class Game {
     playSfx('sting')
   }
 
+  /**
+   * The Crucible: eight minutes of open-field swarm with a field upgrade
+   * dropped every minute, then the Colossus walks in and the clock stops
+   * mattering. Every upgrade taken carries straight into the boss fight.
+   */
+  /** A field upgrade crate: a pulsing ring in the perk's own colour. */
+  private drawPowerup(pu: Powerup) {
+    const ctx = this.ctx
+    const beat = 1 + Math.sin(pu.pulse * 4) * 0.12
+    ctx.save()
+    ctx.translate(pu.x, pu.y)
+    ctx.globalAlpha = 0.28
+    ctx.fillStyle = pu.perk.color
+    ctx.beginPath()
+    ctx.arc(0, 0, pu.r * 2.1 * beat, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+    ctx.fillStyle = '#0f172a'
+    ctx.strokeStyle = pu.perk.color
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.rect(-pu.r, -pu.r, pu.r * 2, pu.r * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = pu.perk.color
+    ctx.font = 'bold 15px system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(pu.perk.name.slice(0, 1), 0, 1)
+    ctx.font = 'bold 11px system-ui, sans-serif'
+    ctx.fillStyle = '#e2e8f0'
+    ctx.fillText(pu.perk.name.toUpperCase(), 0, -pu.r - 10)
+    ctx.restore()
+  }
+
+  /** A support drone: a squat turret body with a barrel and a muzzle kick. */
+  private drawAlly(a: Ally) {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.fillStyle = 'rgba(0,0,0,0.35)'
+    ctx.beginPath()
+    ctx.ellipse(a.x, a.y + a.r * 0.5, a.r, a.r * 0.5, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.translate(a.x, a.y)
+    ctx.rotate(a.angle)
+    ctx.fillStyle = '#0ea5e9'
+    ctx.beginPath()
+    ctx.arc(0, 0, a.r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#e0f2fe'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.fillStyle = '#bae6fd'
+    ctx.fillRect(a.r * 0.2 - a.recoil * 4, -3, a.r * 1.1, 6)
+    ctx.restore()
+  }
+
+  private updateArena(dt: number) {
+    const mission = this.mission
+    if (!mission || mission.type !== 'arena') return
+    const total = mission.arenaTime ?? ARENA_TIME
+
+    if (!this.arenaBossSpawned) {
+      this.arenaTimer += dt
+      // One drop per elapsed minute, capped at the eight the run is long.
+      const due = Math.min(Math.floor(this.arenaTimer / ARENA_DROP_INTERVAL), Math.floor(total / ARENA_DROP_INTERVAL))
+      if (due > this.arenaDrops) {
+        this.arenaDrops = due
+        this.dropArenaChoice(due)
+      }
+      if (this.arenaTimer >= total) this.startColossus()
+    }
+
+    for (const pu of this.powerups) pu.pulse += dt
+    this.updateAllies(dt)
+  }
+
+  /** Lays two upgrades in front of the players; taking one clears the pair. */
+  private dropArenaChoice(wave: number) {
+    const pool = [...ARENA_PERKS].sort(() => Math.random() - 0.5).slice(0, 2)
+    const anchor = this.p1 ?? { x: this.map.width / 2, y: this.map.height / 2 }
+    for (const perk of pool) {
+      const spot = this.openSpot(18, anchor, 120, 260)
+      this.powerups.push({ x: spot.x, y: spot.y, r: 18, perk, wave, pulse: 0 })
+    }
+    this.banner = `Field upgrade dropped — minute ${wave}/8`
+    this.bannerTimer = 3
+    playSfx('medkit')
+  }
+
+  /** Ends the survival phase: the field is swept and the Colossus lands. */
+  private startColossus() {
+    this.arenaBossSpawned = true
+    this.arenaTimer = this.mission?.arenaTime ?? ARENA_TIME
+    // The swarm is wiped so the finale is a clean duel, not a pile-on.
+    this.enemies = []
+    this.venom = []
+    this.powerups = []
+    this.boss = this.makeBoss(this.mission?.boss ?? 'rust-colossus')
+    this.banner = 'THE RUST COLOSSUS'
+    this.bannerTimer = 4
+    this.flash = 0.6
+    this.shake = 1
+    playSfx('boss-roar')
+    playMusic('boss')
+  }
+
+  /** Support drones trail their owner and snipe whatever is closest. */
+  private updateAllies(dt: number) {
+    const leader = this.p1 && !this.p1.down ? this.p1 : this.alivePlayers[0]
+    this.allies.forEach((a, i) => {
+      a.recoil = Math.max(0, a.recoil - dt * 4)
+      a.cooldown = Math.max(0, a.cooldown - dt)
+      if (leader) {
+        // Fan the drones around their owner instead of stacking them.
+        const slot = (i / Math.max(1, this.allies.length)) * Math.PI * 2
+        const goal = {
+          x: leader.x + Math.cos(slot) * ALLY_FOLLOW_DISTANCE,
+          y: leader.y + Math.sin(slot) * ALLY_FOLLOW_DISTANCE,
+        }
+        const d = Math.hypot(goal.x - a.x, goal.y - a.y)
+        if (d > 6) {
+          const step = Math.min(ALLY_SPEED * dt, d)
+          this.moveCircle(a, ((goal.x - a.x) / d) * step, ((goal.y - a.y) / d) * step)
+        }
+      }
+
+      let target: Enemy | null = null
+      let best = ALLY_RANGE
+      for (const e of this.enemies) {
+        const d = Math.hypot(e.x - a.x, e.y - a.y)
+        if (d < best) {
+          best = d
+          target = e
+        }
+      }
+      const boss = this.boss
+      if (!target && boss && boss.hp > 0 && Math.hypot(boss.x - a.x, boss.y - a.y) < ALLY_RANGE) {
+        a.angle = Math.atan2(boss.y - a.y, boss.x - a.x)
+        if (a.cooldown === 0) {
+          a.cooldown = ALLY_FIRE_INTERVAL
+          a.recoil = 1
+          // Against the boss the drone chips a flat slice of a zombie's worth.
+          boss.hp -= ARENA_ZOMBIE_HP * this.hpScale * ALLY_DAMAGE_FRACTION
+          boss.hurt = 0.1
+        }
+        return
+      }
+      if (!target) return
+      a.angle = Math.atan2(target.y - a.y, target.x - a.x)
+      if (a.cooldown > 0) return
+      a.cooldown = ALLY_FIRE_INTERVAL
+      a.recoil = 1
+      const index = this.enemies.indexOf(target)
+      target.hp -= target.maxHp * ALLY_DAMAGE_FRACTION
+      if (target.hp <= 0 && index >= 0) this.killEnemy(index)
+      playSfx('turret')
+    })
+  }
+
+  /** Adds a taken upgrade to the run; drones spawn beside their owner. */
+  private takeArenaPerk(perk: ArenaPerk, taker: Player) {
+    this.arenaPerks[perk.id] += 1
+    if (perk.id === 'ally') {
+      const spot = this.openSpot(14, taker, 40, 90)
+      this.allies.push({ x: spot.x, y: spot.y, r: 13, angle: 0, cooldown: 0, recoil: 0 })
+    }
+    this.banner = `${perk.name} online — ${perk.blurb}`
+    this.bannerTimer = 3.5
+    playSfx('overdrive')
+  }
+
+  /** Multiplier on movement speed and rate of fire from Kinetic Servos. */
+  private get arenaHaste(): number {
+    return 1 + ARENA_HASTE * this.arenaPerks.haste
+  }
+
+  /**
+   * Single funnel for everything that wounds a player, so Armour Plating
+   * cannot be missed by one damage source.
+   */
+  private damagePlayer(p: Player, amount: number) {
+    const soak = Math.max(0.1, 1 - ARENA_ARMOUR * this.arenaPerks.armour)
+    p.hp -= amount * soak
+  }
+
+  /**
+   * Crucible rounds: Leech Coupling heals the shooter and Explosive Rounds
+   * splash a slice of the hit onto everything standing nearby.
+   */
+  private arenaOnHit(b: Bullet, dealt: number, x: number, y: number, victim: Enemy | null) {
+    if (dealt <= 0) return
+    const leech = this.arenaPerks.lifesteal
+    if (leech > 0 && b.owner && !b.owner.down) {
+      b.owner.hp = Math.min(b.owner.maxHp, b.owner.hp + dealt * ARENA_LIFESTEAL * leech)
+    }
+    const stacks = this.arenaPerks.explosive
+    if (stacks <= 0) return
+    const splash = dealt * ARENA_SPLASH * stacks
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i]
+      if (e === victim) continue
+      if (Math.hypot(e.x - x, e.y - y) > ARENA_SPLASH_RADIUS + e.r) continue
+      e.hp -= splash
+      if (e.hp <= 0) this.killEnemy(i)
+    }
+    const boss = this.boss
+    if (boss && boss.hp > 0 && Math.hypot(boss.x - x, boss.y - y) < ARENA_SPLASH_RADIUS + boss.r) {
+      boss.hp -= splash
+    }
+  }
+
   private updatePickups(dt: number) {
+    for (let i = this.powerups.length - 1; i >= 0; i--) {
+      const pu = this.powerups[i]
+      const taker = this.alivePlayers.find(
+        (p) => Math.hypot(pu.x - p.x, pu.y - p.y) < p.r + pu.r
+      )
+      if (!taker) continue
+      this.takeArenaPerk(pu.perk, taker)
+      // Only one upgrade per minute: the twin on offer disappears with it.
+      this.powerups = this.powerups.filter((o) => o.wave !== pu.wave)
+      break
+    }
+
     for (let i = this.ammoBoxes.length - 1; i >= 0; i--) {
       const a = this.ammoBoxes[i]
       const taker = this.alivePlayers.find((p) => Math.hypot(a.x - p.x, a.y - p.y) < p.r + 14)
@@ -3549,7 +3946,11 @@ export class Game {
     // The valley gauntlet thickens the further down it the players push.
     const race = mission.type === 'race'
     const rail = mission.type === 'rail'
-    const jungle = overgrowth || supply || race || rail
+    // The Crucible swarms without let-up until the Colossus lands, then stops.
+    const arena = mission.type === 'arena'
+    if (arena && this.arenaBossSpawned) return
+    const jungle = overgrowth || supply || race || rail || arena
+    const arenaRamp = arena ? Math.min(1, this.arenaTimer / (mission.arenaTime ?? ARENA_TIME)) : 0
     const raceRamp = race ? this.raceProgress : 0
     // Hold the Line ramps from a trickle to a wall of bodies by the last second.
     const holdProgress = hold && mission.holdTime ? 1 - this.holdTimer / mission.holdTime : 0
@@ -3560,6 +3961,8 @@ export class Game {
         ? 6
         : hold
           ? Math.round(6 * ramp)
+          : arena
+            ? Math.round(16 + arenaRamp * 20)
           : generator
             ? 12
             : rail
@@ -3587,6 +3990,8 @@ export class Game {
         ? 2.4
         : hold
           ? Math.max(0.35, 1.6 / ramp)
+          : arena
+            ? Math.max(0.18, 0.85 - arenaRamp * 0.6)
           : generator
             ? 0.8
             : rail
@@ -3623,6 +4028,7 @@ export class Game {
       y: spot.y,
       r: 11,
       hp: 60 * RUNNER_HP_FRACTION * this.hpScale,
+      maxHp: 60 * RUNNER_HP_FRACTION * this.hpScale,
       speed: 0,
       baseSpeed: RUNNER_SPEED * (95 + Math.random() * 30),
       attackCooldown: 0,
@@ -3648,6 +4054,7 @@ export class Game {
       y: spot.y,
       r: 14,
       hp: 70 * this.hpScale,
+      maxHp: 70 * this.hpScale,
       speed: 0,
       baseSpeed: 88 + Math.random() * 26,
       attackCooldown: 0,
@@ -3673,6 +4080,7 @@ export class Game {
       y: spot.y,
       r: brute ? 20 : 14,
       hp: (brute ? 120 : 60) * this.hpScale,
+      maxHp: (brute ? 120 : 60) * this.hpScale,
       speed: 0,
       baseSpeed: brute ? 70 : 95 + Math.random() * 30,
       attackCooldown: 0,
@@ -3697,6 +4105,7 @@ export class Game {
       y: spot.y,
       r: 10,
       hp: 34 * this.hpScale,
+      maxHp: 34 * this.hpScale,
       speed: 0,
       baseSpeed: 1.5 * (95 + Math.random() * 30),
       attackCooldown: 0,
@@ -3805,6 +4214,8 @@ export class Game {
     }
 
     for (const kit of this.medkits) this.drawMedkit(kit)
+    for (const pu of this.powerups) this.drawPowerup(pu)
+    for (const a of this.allies) this.drawAlly(a)
     for (const b of this.barricades) this.drawBarricade(b)
 
     for (const s of this.survivors) this.drawSurvivor(s)

@@ -368,6 +368,8 @@ function missionCard(m: Mission): HTMLElement {
                 ? `<span class="rounded-md bg-lime-500/15 px-2 py-0.5 text-[11px] font-semibold text-lime-300">Recover ${m.crates ?? 0} crates</span>`
                 : m.type === 'rail'
                   ? '<span class="rounded-md bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300">Rail shooter · truck bed</span>'
+                : m.type === 'arena'
+                  ? `<span class="rounded-md bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300">Survive ${Math.round((m.arenaTime ?? 480) / 60)} min · boss finale</span>`
                 : m.type === 'race'
                   ? '<span class="rounded-md bg-lime-500/15 px-2 py-0.5 text-[11px] font-semibold text-lime-300">Reach extraction</span>'
                   : `<span class="rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-300">${m.target} kills</span>`
@@ -1196,6 +1198,8 @@ game.onStateChange = (state: GameState) => {
         ? `${currentMission.name} complete — the generator is still running in ${where}.`
       : currentMission.type === 'rail'
         ? `${currentMission.name} complete — the rig rolled into the depot with its plating still on.`
+      : currentMission.type === 'arena'
+        ? `${currentMission.name} complete — eight minutes in the salt and the Rust Colossus went down with them.`
       : currentMission.type === 'boss'
         ? `${currentMission.name} complete — the Mutated Alpha Bug is dead. The hive falls silent.`
         : currentMission.type === 'protect'

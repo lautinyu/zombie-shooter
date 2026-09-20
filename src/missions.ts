@@ -12,6 +12,7 @@ export type MissionType =
   | 'supply'
   | 'race'
   | 'rail'
+  | 'arena'
 
 /**
  * Chapter 1 is the outbreak, chapter 2 the arctic Project Horizon arc and
@@ -84,6 +85,7 @@ export type BossKind =
   | 'brood-matron'
   | 'cryo-stalker'
   | 'canopy-leviathan'
+  | 'rust-colossus'
 
 /** Path bosses; clearing two of them opens the Hive Mother finale. */
 export const PATH_BOSS_IDS = ['quarantine-boss', 'swarm-boss', 'evac-boss']
@@ -150,6 +152,8 @@ export interface Mission {
   density?: number
   /** Armoured truck hit points on the 'rail' convoy mission. */
   truckHp?: number
+  /** Seconds of swarm survival before the boss drops on 'arena' missions. */
+  arenaTime?: number
 }
 
 export const MISSIONS: Mission[] = [
@@ -667,18 +671,22 @@ export const MISSIONS: Mission[] = [
   },
   {
     id: 'ch4-7',
-    name: 'The Dead Sea Crossing',
+    name: 'The Dead Sea Crucible',
     map: 'dunes',
-    type: 'race',
+    type: 'arena',
     target: 0,
     survivors: 0,
     description:
-      'The salt flats are the fastest way east and the worst place in the world to be caught standing still.',
-    objective: 'Cross the flats to the far extraction point. The salt sinks slow you down.',
+      'The salt flats have nowhere to hide, so the convoy uses them as a proving ground: eight minutes of open-field swarm, then whatever the Rustlands sends to finish it.',
+    objective:
+      'Survive 8 minutes of the swarm, grab a field upgrade every minute, then kill the Rust Colossus.',
     path: null,
     unlocks: ['ch4-8'],
     payout: 2.3,
     rewardBase: 115,
+    arenaTime: 480,
+    boss: 'rust-colossus',
+    density: 1.4,
     chapter: 4,
   },
   {
