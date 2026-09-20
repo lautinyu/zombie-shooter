@@ -808,8 +808,8 @@ const BOSS_REVEAL_TIME = 3.6
 const ARENA_TIME = 480
 /** Seconds between field-upgrade drops. */
 const ARENA_DROP_INTERVAL = 60
-/** The Crucible rifle hits 50% harder than the stock Old Rifle. */
-const ARENA_RIFLE_BONUS = 1.5
+/** The Crucible rifle hits 72.5% harder than the stock Old Rifle. */
+const ARENA_RIFLE_BONUS = 1.725
 /** Ally shots take a flat 5% of a zombie's full health; 20 shots kills it. */
 const ALLY_DAMAGE_FRACTION = 0.05
 const ALLY_FIRE_INTERVAL = 0.4
@@ -874,7 +874,7 @@ function arenaLoadout(loadout: Weapon[]): Weapon[] {
     ...base,
     name: 'Reinforced Rifle',
     damage: base.damage * ARENA_RIFLE_BONUS,
-    description: 'Crucible issue: the same old action with 50% more punch behind it.',
+    description: 'Crucible issue: the same old action with 72.5% more punch behind it.',
   }
   return [rifle, ...loadout.slice(1)]
 }
@@ -1650,30 +1650,12 @@ export class Game {
     this.checkOutcome()
   }
 
-  /**
-   * Rustlands oil slicks and industrial turrets. Both co-op players and every
-   * zombie are registered as beam targets, so the yard is hostile to all.
-   */
+  /** Rustlands oil slicks: no damage, just ground the boots cannot hold. */
   private updateHazards(dt: number) {
     const h = this.hazards
     if (!h) return
     this.hazardClock += dt
-    h.update(dt, {
-      bodies: [
-        ...this.alivePlayers.map((p) => ({
-          body: p,
-          hurt: (amount: number) => {
-            this.damagePlayer(p, amount)
-            p.hurtCooldown = 0.2
-            p.safeTimer = 0
-          },
-        })),
-        ...this.enemies.map((z) => ({ body: z, hurt: (amount: number) => (z.hp -= amount) })),
-      ],
-    })
-    for (let i = this.enemies.length - 1; i >= 0; i--) {
-      if (this.enemies[i].hp <= 0) this.killEnemy(i)
-    }
+    h.update(dt, { bodies: [] })
   }
 
   /** True while the players are mounted in the rail mission's truck bed. */
@@ -4196,7 +4178,7 @@ export class Game {
     this.drawFloor()
     this.drawMapLabel()
     for (const pit of m.mud ?? []) this.drawMud(pit)
-    this.hazards?.render(ctx, this.hazardClock)
+    this.hazards?.render(ctx)
     const mode = this.mission?.type
     if (mode === 'protect' || mode === 'race' || mode === 'rail') this.drawExtraction()
 
