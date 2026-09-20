@@ -40,7 +40,7 @@ const KNOCKBACK_DRAG = 700
 const INPUT_BUFFER = 0.25
 
 type MoveId = 'light' | 'heavy' | 'special'
-type Phase = 'attract' | 'fight' | 'round-over' | 'match-over'
+type Phase = 'attract' | 'select' | 'fight' | 'round-over' | 'match-over'
 type ActionId = 'left' | 'right' | 'jump' | 'light' | 'heavy' | 'special' | 'block'
 
 interface MoveData {
@@ -110,6 +110,87 @@ const MOVES: Record<MoveId, MoveData> = {
     color: '#a855f7',
   },
 }
+
+/**
+ * A playable fighter. Passives are deliberately small multipliers so the
+ * roster stays readable: every pick trades one edge for a matching weakness
+ * rather than raising the damage ceiling.
+ */
+interface Character {
+  name: string
+  tint: string
+  dark: string
+  accent: string
+  /** Share of damage dealt that heals the attacker. */
+  lifesteal: number
+  /** Multiplier on outgoing damage. */
+  power: number
+  /** Multiplier on walk, backdash and dash speed. */
+  speed: number
+  /** Multiplier on how fast move frames advance. */
+  attackSpeed: number
+  /** Multiplier on the health pool. */
+  hpScale: number
+  /** Chance an incoming hit is evaded outright. */
+  dodge: number
+  /** One-line passive summary shown on the select screen. */
+  trait: string
+}
+
+const ROSTER: Character[] = [
+  {
+    name: 'Warden',
+    tint: '#e2e8f0',
+    dark: '#334155',
+    accent: '#f59e0b',
+    lifesteal: 0,
+    power: 1.1,
+    speed: 1,
+    attackSpeed: 1,
+    hpScale: 1,
+    dodge: 0,
+    trait: '+10% DAMAGE ON EVERY ATTACK',
+  },
+  {
+    name: 'Reaper',
+    tint: '#f43f5e',
+    dark: '#4c0519',
+    accent: '#fecdd3',
+    lifesteal: 0.05,
+    power: 1,
+    speed: 1,
+    attackSpeed: 1,
+    hpScale: 1,
+    dodge: 0,
+    trait: '5% LIFESTEAL ON EVERY HIT',
+  },
+  {
+    name: 'Shambler',
+    tint: '#4ade80',
+    dark: '#14532d',
+    accent: '#bbf7d0',
+    lifesteal: 0,
+    power: 1,
+    speed: 1.1,
+    attackSpeed: 1.1,
+    hpScale: 0.95,
+    dodge: 0,
+    trait: '+10% SPEED & ATTACK SPEED · -5% HP',
+  },
+  {
+    name: 'Ghost',
+    tint: '#c4b5fd',
+    dark: '#3730a3',
+    accent: '#e0e7ff',
+    lifesteal: 0,
+    power: 1,
+    speed: 1,
+    attackSpeed: 1,
+    hpScale: 1,
+    dodge: 0.07,
+    trait: '7% CHANCE TO EVADE A HIT',
+  },
+]
 
 interface Opponent {
   name: string
@@ -206,7 +287,14 @@ interface Fighter {
   maxHp: number
   /** Movement multiplier applied to walk, backdash and CPU approach. */
   speed: number
+  /** Passive multipliers; CPU opponents run the neutral 1.0 set. */
+  power: number
+  attackSpeed: number
+  lifesteal: number
+  dodge: number
   boss: boolean
+  /** Set briefly when a dodge eats an attack, so the miss reads on screen. */
+  evadeFlash: number
   /** Advances while walking so the legs animate. */
   walkPhase: number
   x: number
@@ -315,22 +403,27 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
    */
   const buffer = new Map<string, number>()
 
-  const makeFighter = (id: 1 | 2, from: Opponent | null): Fighter => ({
+  const makeFighter = (id: 1 | 2, from: Opponent | null, char: Character): Fighter => ({
     id,
-    name: from ? from.name : 'Warden',
-    tint: from ? from.tint : '#e2e8f0',
-    dark: from ? from.dark : '#334155',
-    accent: from ? from.accent : '#f59e0b',
-    maxHp: MAX_HP * (from ? from.hpScale : 1),
-    speed: from ? from.speed : 1,
+    name: from ? from.name : char.name,
+    tint: from ? from.tint : char.tint,
+    dark: from ? from.dark : char.dark,
+    accent: from ? from.accent : char.accent,
+    maxHp: MAX_HP * (from ? from.hpScale : char.hpScale),
+    speed: from ? from.speed : char.speed,
+    power: from ? 1 : char.power,
+    attackSpeed: from ? 1 : char.attackSpeed,
+    lifesteal: from ? 0 : char.lifesteal,
+    dodge: from ? 0 : char.dodge,
     boss: Boolean(from?.boss),
+    evadeFlash: 0,
     walkPhase: 0,
     x: id === 1 ? VIEW_W * 0.32 : VIEW_W * 0.68,
     y: FLOOR,
     vx: 0,
     vy: 0,
     facing: id === 1 ? 1 : -1,
-    hp: MAX_HP * (from ? from.hpScale : 1),
+    hp: MAX_HP * (from ? from.hpScale : char.hpScale),
     move: null,
     moveTimer: 0,
     moveHit: false,
@@ -341,8 +434,12 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     dealt: 0,
   })
 
-  let p1 = makeFighter(1, null)
-  let p2 = makeFighter(2, OPPONENTS[0])
+  /** Roster index each player has highlighted on the select screen. */
+  let picks: [number, number] = [0, 1]
+  let locked: [boolean, boolean] = [false, false]
+
+  let p1 = makeFighter(1, null, ROSTER[0])
+  let p2 = makeFighter(2, OPPONENTS[0], ROSTER[1])
 
   /** CPU decision clock: it commits to one intent at a time, like a player. */
   let cpuThink = 0
@@ -354,13 +451,22 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
   const resetRound = () => {
     const facing2: 1 | -1 = -1
-    p1 = makeFighter(1, null)
-    p2 = makeFighter(2, versus ? { ...OPPONENTS[1], name: 'Reaper' } : opponent())
+    p1 = makeFighter(1, null, ROSTER[picks[0]])
+    p2 = makeFighter(2, versus ? null : opponent(), ROSTER[picks[1]])
     p2.facing = facing2
     clock = ROUND_TIME
     shake = 0
     cpuThink = 0
     cpuPause = 0.8
+  }
+
+  /** Character select sits between the attract screen and the first round. */
+  const startSelect = (pvp: boolean) => {
+    versus = pvp
+    locked = [false, false]
+    phase = 'select'
+    phaseTimer = 0
+    playSfx('swap')
   }
 
   const startMatch = (pvp: boolean) => {
@@ -435,11 +541,19 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     if (airGap > data.height) return
 
     attacker.moveHit = true
+    // Evasion resolves before the guard: the blow simply misses.
+    if (defender.dodge > 0 && Math.random() < defender.dodge) {
+      defender.evadeFlash = 0.6
+      playSfx('swap')
+      return
+    }
     const guarding =
       defender.blocking && defender.facing !== attacker.facing && defender.y === FLOOR
-    const damage = guarding ? data.damage * CHIP_RATIO : data.damage
+    const damage = (guarding ? data.damage * CHIP_RATIO : data.damage) * attacker.power
     defender.hp = Math.max(0, defender.hp - damage)
     attacker.dealt += damage
+    if (attacker.lifesteal > 0)
+      attacker.hp = Math.min(attacker.maxHp, attacker.hp + damage * attacker.lifesteal)
     defender.stun = guarding ? data.hitstun * 0.6 : data.hitstun
     defender.move = null
     defender.hitFlash = guarding ? 0.1 : 0.22
@@ -459,6 +573,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const stepFighter = (f: Fighter, foe: Fighter, dt: number, controlled: boolean) => {
     const startX = f.x
     f.hitFlash = Math.max(0, f.hitFlash - dt)
+    f.evadeFlash = Math.max(0, f.evadeFlash - dt)
     f.specialCd = Math.max(0, f.specialCd - dt)
     f.stun = Math.max(0, f.stun - dt)
 
@@ -466,7 +581,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     if (f.move !== null) {
       const data = MOVES[f.move]
-      f.moveTimer += dt
+      f.moveTimer += dt * f.attackSpeed
       if (f.moveTimer >= data.startup && f.moveTimer <= data.startup + data.active) {
         f.x += f.facing * data.lunge * dt
       }
@@ -600,6 +715,35 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const update = (dt: number) => {
     blink += dt
     shake = Math.max(0, shake - dt * 2)
+
+    if (phase === 'select') {
+      phaseTimer += dt
+      // Only the seats that actually play get a cursor: the ladder's CPU keeps
+      // its own roster, so 1P select is P1 alone.
+      const seats: (1 | 2)[] = versus ? [1, 2] : [1]
+      for (const id of seats) {
+        const i = id - 1
+        if (tapped(id, 'block') && locked[i]) {
+          locked[i] = false
+          continue
+        }
+        if (locked[i]) continue
+        if (tapped(id, 'left')) {
+          picks[i] = (picks[i] + ROSTER.length - 1) % ROSTER.length
+          playSfx('swap')
+        }
+        if (tapped(id, 'right')) {
+          picks[i] = (picks[i] + 1) % ROSTER.length
+          playSfx('swap')
+        }
+        if (tapped(id, 'light') || tapped(id, 'heavy') || tapped(id, 'special')) {
+          locked[i] = true
+          playSfx('overdrive')
+        }
+      }
+      if (seats.every((id) => locked[id - 1])) startMatch(versus)
+      return
+    }
 
     if (phase === 'fight') {
       for (const [k, t] of buffer) {
@@ -851,6 +995,80 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     }
   }
 
+  /** Character select: one card per roster slot, plus each seat's cursor. */
+  const drawSelect = () => {
+    ctx.fillStyle = 'rgba(2,6,12,0.92)'
+    ctx.fillRect(0, 0, VIEW_W, VIEW_H)
+    retroText('CHOOSE YOUR FIGHTER', 58, 34, '#a3e635')
+
+    const cardW = 176
+    const gap = 20
+    const totalW = ROSTER.length * cardW + (ROSTER.length - 1) * gap
+    const left = (VIEW_W - totalW) / 2
+
+    ROSTER.forEach((c, i) => {
+      const x = left + i * (cardW + gap)
+      const y = 96
+      const h = 246
+      const p1Here = picks[0] === i
+      const p2Here = versus && picks[1] === i
+      ctx.fillStyle = '#0b1120'
+      ctx.fillRect(x, y, cardW, h)
+      ctx.lineWidth = p1Here || p2Here ? 3 : 1.5
+      ctx.strokeStyle = p1Here ? '#fcd34d' : p2Here ? '#38bdf8' : '#334155'
+      ctx.strokeRect(x, y, cardW, h)
+
+      // Portrait: the fighter's own palette, so picks read at a glance.
+      ctx.fillStyle = c.dark
+      ctx.fillRect(x + 8, y + 8, cardW - 16, 118)
+      ctx.fillStyle = c.tint
+      ctx.fillRect(x + cardW / 2 - 26, y + 46, 52, 72)
+      ctx.fillRect(x + cardW / 2 - 18, y + 20, 36, 30)
+      ctx.fillStyle = c.accent
+      ctx.fillRect(x + cardW / 2 - 12, y + 30, 24, 8)
+      ctx.fillRect(x + cardW / 2 - 22, y + 84, 44, 7)
+
+      ctx.textAlign = 'center'
+      ctx.font = 'bold 18px ui-monospace, monospace'
+      ctx.fillStyle = '#e2e8f0'
+      ctx.fillText(c.name.toUpperCase(), x + cardW / 2, y + 152)
+
+      ctx.font = 'bold 10px ui-monospace, monospace'
+      ctx.fillStyle = '#94a3b8'
+      const words = c.trait.split(' ')
+      let line = ''
+      let ty = y + 176
+      for (const w of words) {
+        const next = line ? `${line} ${w}` : w
+        if (ctx.measureText(next).width > cardW - 20) {
+          ctx.fillText(line, x + cardW / 2, ty)
+          ty += 14
+          line = w
+        } else line = next
+      }
+      if (line) ctx.fillText(line, x + cardW / 2, ty)
+
+      ctx.font = 'bold 11px ui-monospace, monospace'
+      if (p1Here) {
+        ctx.fillStyle = locked[0] ? '#fcd34d' : '#fde68a'
+        ctx.fillText(locked[0] ? 'P1 LOCKED' : 'P1', x + cardW / 2 - 34, y + h - 14)
+      }
+      if (p2Here) {
+        ctx.fillStyle = locked[1] ? '#38bdf8' : '#bae6fd'
+        ctx.fillText(locked[1] ? 'P2 LOCKED' : 'P2', x + cardW / 2 + 34, y + h - 14)
+      }
+    })
+
+    retroText(
+      versus ? 'P1 A/D + J TO LOCK  ·  P2 ←→ + 1 TO LOCK' : 'A/D TO MOVE  ·  J OR ENTER TO LOCK IN',
+      384,
+      16,
+      '#e2e8f0',
+      true,
+    )
+    retroText('BLOCK UNLOCKS YOUR PICK · ESC QUITS', 412, 13, '#65a30d')
+  }
+
   const retroText = (text: string, y: number, size: number, color: string, flashing = false) => {
     if (flashing && Math.floor(blink * 2) % 2 === 0) return
     ctx.save()
@@ -898,6 +1116,18 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     drawFighter(p1)
     drawFighter(p2)
+
+    // Evade callout, so the 7% dodge is visible when it fires.
+    for (const f of [p1, p2]) {
+      if (f.evadeFlash <= 0) continue
+      ctx.save()
+      ctx.textAlign = 'center'
+      ctx.globalAlpha = Math.min(1, f.evadeFlash * 2)
+      ctx.font = 'bold 18px ui-monospace, monospace'
+      ctx.fillStyle = '#c4b5fd'
+      ctx.fillText('EVADE', f.x, f.y - FIGHTER_H - 24 - (0.6 - f.evadeFlash) * 20)
+      ctx.restore()
+    }
     ctx.restore()
 
     drawHealthBars()
@@ -914,6 +1144,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 418, 14, '#65a30d')
       retroText('6 STAGES — SURVIVE TO THE ROT SOVEREIGN', 442, 14, '#f43f5e')
     }
+
+    if (phase === 'select') drawSelect()
 
     if (phase === 'round-over' || phase === 'match-over') {
       ctx.fillStyle = 'rgba(2,6,12,0.55)'
@@ -953,8 +1185,9 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     }
     // 1/2 pick a mode on the attract screen; mid-match they are P2's attacks.
     const idle = phase === 'attract' || (phase === 'match-over' && phaseTimer > 1.4)
-    if (idle && (key === '1' || key === '2')) startMatch(key === '2')
-    if (idle && key === 'enter') startMatch(false)
+    if (idle && (key === '1' || key === '2')) startSelect(key === '2')
+    if (idle && key === 'enter') startSelect(false)
+    if (phase === 'select' && key === 'enter') locked[0] = true
   }
 
   const onKeyUp = (e: KeyboardEvent) => {
@@ -977,7 +1210,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   }
 
   pad.onStart((pvp) => {
-    if (phase === 'attract' || (phase === 'match-over' && phaseTimer > 1.4)) startMatch(pvp)
+    if (phase === 'attract' || (phase === 'match-over' && phaseTimer > 1.4)) startSelect(pvp)
   })
 
   overlay.querySelector<HTMLButtonElement>('#fighter-quit')?.addEventListener('click', () => close())
