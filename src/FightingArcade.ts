@@ -115,18 +115,85 @@ interface Opponent {
   name: string
   tint: string
   dark: string
+  /** Trim colour for visor, belt and strike trails. */
+  accent: string
   /** Scales CPU reaction speed and aggression; 1 is the opening fight. */
   skill: number
+  /** Health pool as a multiple of the player's. */
+  hpScale: number
+  /** Walk and dash speed as a multiple of the player's. */
+  speed: number
   /** Round-win bonus awarded for beating this opponent. */
   bounty: number
+  /** Bosses are larger, crowned and hit harder. */
+  boss?: boolean
 }
 
 const OPPONENTS: Opponent[] = [
-  { name: 'Shambler', tint: '#4ade80', dark: '#166534', skill: 0.7, bounty: 1200 },
-  { name: 'Runner', tint: '#38bdf8', dark: '#075985', skill: 1, bounty: 1800 },
-  { name: 'Brute', tint: '#f97316', dark: '#7c2d12', skill: 1.3, bounty: 2600 },
-  { name: 'Cryo-Stalker', tint: '#e0f2fe', dark: '#0e7490', skill: 1.6, bounty: 3600 },
-  { name: 'Canopy Leviathan', tint: '#a855f7', dark: '#4c1d95', skill: 2, bounty: 6000 },
+  {
+    name: 'Shambler',
+    tint: '#4ade80',
+    dark: '#14532d',
+    accent: '#bbf7d0',
+    skill: 0.7,
+    hpScale: 0.9,
+    speed: 0.85,
+    bounty: 1200,
+  },
+  {
+    name: 'Runner',
+    tint: '#38bdf8',
+    dark: '#0c4a6e',
+    accent: '#e0f2fe',
+    skill: 1,
+    hpScale: 1,
+    speed: 1.15,
+    bounty: 1800,
+  },
+  {
+    name: 'Brute',
+    tint: '#f97316',
+    dark: '#7c2d12',
+    accent: '#fed7aa',
+    skill: 1.3,
+    hpScale: 1.25,
+    speed: 0.95,
+    bounty: 2600,
+  },
+  {
+    name: 'Cryo-Stalker',
+    tint: '#bae6fd',
+    dark: '#155e75',
+    accent: '#67e8f9',
+    skill: 1.6,
+    hpScale: 1.3,
+    speed: 1.2,
+    bounty: 3600,
+  },
+  {
+    name: 'Canopy Leviathan',
+    tint: '#a855f7',
+    dark: '#4c1d95',
+    accent: '#f0abfc',
+    skill: 2,
+    hpScale: 1.45,
+    speed: 1.1,
+    bounty: 6000,
+    boss: true,
+  },
+  {
+    // Final stage: relentless pressure, a deep health pool and almost no
+    // whiffing, so only clean blocking and punishes get through.
+    name: 'Rot Sovereign',
+    tint: '#f43f5e',
+    dark: '#4c0519',
+    accent: '#fde047',
+    skill: 2.8,
+    hpScale: 1.75,
+    speed: 1.3,
+    bounty: 12000,
+    boss: true,
+  },
 ]
 
 interface Fighter {
@@ -134,6 +201,14 @@ interface Fighter {
   name: string
   tint: string
   dark: string
+  accent: string
+  /** Full health pool; opponents deeper in the ladder carry more. */
+  maxHp: number
+  /** Movement multiplier applied to walk, backdash and CPU approach. */
+  speed: number
+  boss: boolean
+  /** Advances while walking so the legs animate. */
+  walkPhase: number
   x: number
   y: number
   /** Knockback velocity, bled off by friction. */
@@ -243,14 +318,19 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const makeFighter = (id: 1 | 2, from: Opponent | null): Fighter => ({
     id,
     name: from ? from.name : 'Warden',
-    tint: from ? from.tint : '#f43f5e',
-    dark: from ? from.dark : '#881337',
+    tint: from ? from.tint : '#e2e8f0',
+    dark: from ? from.dark : '#334155',
+    accent: from ? from.accent : '#f59e0b',
+    maxHp: MAX_HP * (from ? from.hpScale : 1),
+    speed: from ? from.speed : 1,
+    boss: Boolean(from?.boss),
+    walkPhase: 0,
     x: id === 1 ? VIEW_W * 0.32 : VIEW_W * 0.68,
     y: FLOOR,
     vx: 0,
     vy: 0,
     facing: id === 1 ? 1 : -1,
-    hp: MAX_HP,
+    hp: MAX_HP * (from ? from.hpScale : 1),
     move: null,
     moveTimer: 0,
     moveHit: false,
@@ -377,6 +457,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   }
 
   const stepFighter = (f: Fighter, foe: Fighter, dt: number, controlled: boolean) => {
+    const startX = f.x
     f.hitFlash = Math.max(0, f.hitFlash - dt)
     f.specialCd = Math.max(0, f.specialCd - dt)
     f.stun = Math.max(0, f.stun - dt)
@@ -414,7 +495,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
           const dir = right ? 1 : -1
           const forward = dir === f.facing
           const speed = f.blocking ? BLOCK_WALK_SPEED : forward ? WALK_SPEED : BACK_SPEED
-          f.x += dir * speed * dt
+          f.x += dir * speed * f.speed * dt
         }
       }
     }
@@ -437,6 +518,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     }
 
     f.x = Math.max(WALL + FIGHTER_W / 2, Math.min(VIEW_W - WALL - FIGHTER_W / 2, f.x))
+    f.walkPhase += Math.abs(f.x - startX) * 0.06
   }
 
   /** Simple spacing-aware CPU: it respects range, whiff-punishes and guards. */
@@ -470,21 +552,27 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     const swing = (id: MoveId) => {
       startMove(f, id)
-      cpuPause = (1.5 - skill * 0.4) * (0.8 + Math.random() * 0.6)
+      // Bosses barely breathe between swings, so they pressure relentlessly.
+      const rest = (1.5 - Math.min(skill, 2.8) * 0.4) * (f.boss ? 0.6 : 1)
+      cpuPause = Math.max(0.22, rest) * (0.8 + Math.random() * 0.6)
     }
 
     // Early opponents misjudge spacing and swing from too far out, leaving the
     // whiff open to punishment; late ones only commit inside true range.
     const sloppy = 1 + Math.max(0, 1 - skill) * 0.7
 
-    if (cpuIntent === 'approach') f.x += dir * WALK_SPEED * 0.9 * dt
-    else if (cpuIntent === 'retreat') f.x -= dir * BACK_SPEED * dt
+    if (cpuIntent === 'approach') f.x += dir * WALK_SPEED * f.speed * 0.9 * dt
+    else if (cpuIntent === 'retreat') f.x -= dir * BACK_SPEED * f.speed * dt
     else if (cpuIntent === 'attack') {
-      if (f.specialCd === 0 && gap < MOVES.special.reach * sloppy && Math.random() < 0.25)
+      if (
+        f.specialCd === 0 &&
+        gap < MOVES.special.reach * sloppy &&
+        Math.random() < (f.boss ? 0.5 : 0.25)
+      )
         swing('special')
       else if (gap < MOVES.heavy.reach * sloppy && Math.random() < 0.3) swing('heavy')
       else if (gap < MOVES.light.reach * sloppy) swing('light')
-      else f.x += dir * WALK_SPEED * 0.9 * dt
+      else f.x += dir * WALK_SPEED * f.speed * 0.9 * dt
     }
   }
 
@@ -568,57 +656,143 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     }
   }
 
+  /** Rounded slab used for every body plate. */
+  const plate = (x: number, y: number, w: number, h: number, r: number, fill: string) => {
+    ctx.fillStyle = fill
+    ctx.beginPath()
+    ctx.moveTo(x + r, y)
+    ctx.arcTo(x + w, y, x + w, y + h, r)
+    ctx.arcTo(x + w, y + h, x, y + h, r)
+    ctx.arcTo(x, y + h, x, y, r)
+    ctx.arcTo(x, y, x + w, y, r)
+    ctx.closePath()
+    ctx.fill()
+  }
+
+  const limb = (
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    w: number,
+    color: string,
+  ) => {
+    ctx.strokeStyle = color
+    ctx.lineWidth = w
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x1, y1)
+    ctx.lineTo(x2, y2)
+    ctx.stroke()
+  }
+
   const drawFighter = (f: Fighter) => {
-    const y = f.y
-    ctx.save()
-    ctx.translate(f.x, y)
-    ctx.scale(f.facing, 1)
-
-    if (f.hitFlash > 0) {
-      ctx.shadowColor = '#fca5a5'
-      ctx.shadowBlur = 24
-    }
-
-    const crouch = f.blocking ? 8 : 0
-    // Legs.
-    ctx.fillStyle = f.dark
-    ctx.fillRect(-20, -34, 14, 34)
-    ctx.fillRect(8, -34, 14, 34)
-    // Torso.
-    ctx.fillStyle = f.hitFlash > 0 ? '#fee2e2' : f.tint
-    ctx.fillRect(-22, -FIGHTER_H + crouch, 44, FIGHTER_H - 34 - crouch)
-    // Head.
-    ctx.fillStyle = f.hitFlash > 0 ? '#fee2e2' : f.tint
-    ctx.fillRect(-14, -FIGHTER_H - 26 + crouch, 28, 26)
-    ctx.fillStyle = '#0f172a'
-    ctx.fillRect(2, -FIGHTER_H - 18 + crouch, 8, 6)
-
-    if (f.blocking) {
-      ctx.fillStyle = 'rgba(56,189,248,0.75)'
-      ctx.fillRect(20, -FIGHTER_H + 12, 10, 64)
-      ctx.strokeStyle = 'rgba(125,211,252,0.85)'
-      ctx.lineWidth = 3
-      ctx.beginPath()
-      ctx.arc(10, -56, 56, -0.9, 0.9)
-      ctx.stroke()
-    }
-
-    // Arms — extended through the active window of the current move.
     const data = f.move === null ? null : MOVES[f.move]
     const striking =
       data !== null && f.moveTimer >= data.startup && f.moveTimer <= data.startup + data.active
     const windup = data !== null && f.moveTimer < data.startup
-    ctx.fillStyle = f.dark
+    const airborne = f.y < FLOOR
+    const time = performance.now() / 1000
+
+    const skin = f.hitFlash > 0 ? '#fee2e2' : f.tint
+    const shade = f.hitFlash > 0 ? '#fca5a5' : f.dark
+    const scale = f.boss ? 1.12 : 1
+
+    ctx.save()
+    ctx.translate(f.x, f.y)
+    ctx.scale(f.facing * scale, scale)
+    if (f.hitFlash > 0) {
+      ctx.shadowColor = '#fca5a5'
+      ctx.shadowBlur = 22
+    }
+
+    // Pose: guarding crouches, attacks lean into or away from the swing, and
+    // the legs stride from the distance walked.
+    const crouch = f.blocking ? 10 : 0
+    const lean = striking ? 7 : windup ? -6 : 0
+    const bob = airborne ? 0 : Math.sin(time * 2.6) * 1.5
+    const stride = airborne || f.blocking ? 0 : Math.sin(f.walkPhase) * 15
+    const hipY = -44 + crouch + bob
+    const shoulderY = -FIGHTER_H + 14 + crouch + bob
+    const headY = shoulderY - 16
+    const tuck = airborne ? 15 : 0
+
+    // Back leg, front leg and boots.
+    limb(-5, hipY, -15 - stride, -tuck, 15, shade)
+    limb(6, hipY, 15 - stride, -tuck, 16, skin)
+    plate(-24 - stride, -tuck - 7, 20, 8, 3, '#0f172a')
+    plate(6 - stride, -tuck - 7, 22, 8, 3, '#0f172a')
+
+    // Back arm stays tight to the chest as a guard.
+    limb(-8 + lean * 0.4, shoulderY + 8, -20 + lean, shoulderY + 30, 13, shade)
+
+    // Torso, hip wrap, chest plate and belt.
+    plate(-22 + lean * 0.5, shoulderY, 42, hipY - shoulderY + 14, 11, skin)
+    plate(-20 + lean * 0.5, hipY - 4, 38, 18, 6, shade)
+    plate(-12 + lean * 0.5, shoulderY + 10, 26, 22, 5, shade)
+    plate(-20 + lean * 0.5, shoulderY + 38, 38, 6, 3, f.accent)
+    // Shoulder pad on the striking side.
+    plate(6 + lean * 0.6, shoulderY - 6, 22, 18, 7, shade)
+
+    // Head, jaw and glowing visor.
+    plate(-13 + lean * 0.7, headY - 26, 27, 28, 8, skin)
+    plate(-13 + lean * 0.7, headY - 8, 27, 10, 4, shade)
+    ctx.save()
+    ctx.shadowColor = f.accent
+    ctx.shadowBlur = 10
+    plate(-4 + lean * 0.7, headY - 20, 17, 7, 3, f.accent)
+    ctx.restore()
+
+    if (f.boss) {
+      // Crown of spines marks the ladder's boss fighters.
+      ctx.fillStyle = f.accent
+      for (let i = 0; i < 3; i++) {
+        const sx = -10 + i * 11 + lean * 0.7
+        ctx.beginPath()
+        ctx.moveTo(sx, headY - 26)
+        ctx.lineTo(sx + 5, headY - 42 - i * 3)
+        ctx.lineTo(sx + 10, headY - 26)
+        ctx.closePath()
+        ctx.fill()
+      }
+    }
+
+    if (f.blocking) {
+      // Braced forearm plus a shimmering guard arc.
+      plate(18, shoulderY + 6, 12, 58, 5, f.accent)
+      ctx.strokeStyle = 'rgba(125,211,252,0.85)'
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(10, shoulderY + 34, 56, -0.9, 0.9)
+      ctx.stroke()
+      ctx.strokeStyle = 'rgba(56,189,248,0.35)'
+      ctx.lineWidth = 10
+      ctx.stroke()
+    }
+
+    // Front arm: it reaches exactly as far as the active hitbox.
     if (striking && data !== null) {
-      ctx.fillRect(18, -data.height - 8, FIGHTER_W / 2 + data.reach - 18, 16)
+      const fistX = FIGHTER_W / 2 + data.reach - 10
+      ctx.save()
+      ctx.shadowColor = data.color
+      ctx.shadowBlur = 18
+      limb(4, shoulderY + 10, fistX, -data.height, 15, skin)
+      plate(fistX - 9, -data.height - 10, 20, 20, 8, data.color)
+      ctx.restore()
+      // Swing trail across the active window.
       ctx.fillStyle = data.color
-      ctx.globalAlpha = 0.65
-      ctx.fillRect(FIGHTER_W / 2, -data.height - 14, data.reach, 28)
+      ctx.globalAlpha = 0.3
+      ctx.fillRect(FIGHTER_W / 2, -data.height - 13, data.reach, 26)
       ctx.globalAlpha = 1
     } else if (windup) {
-      ctx.fillRect(-6, -70, 22, 14)
+      limb(0, shoulderY + 10, -22, shoulderY + 2, 15, skin)
+      plate(-31, shoulderY - 8, 19, 19, 8, shade)
+    } else if (data !== null) {
+      limb(2, shoulderY + 10, 26, shoulderY + 34, 14, skin)
+      plate(19, shoulderY + 26, 18, 18, 7, shade)
     } else {
-      ctx.fillRect(10, -74, 16, 13)
+      limb(2, shoulderY + 8, 22, shoulderY + 20, 14, skin)
+      plate(15, shoulderY + 12, 18, 18, 7, shade)
     }
     ctx.restore()
   }
@@ -631,8 +805,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       ctx.strokeStyle = '#64748b'
       ctx.lineWidth = 2
       ctx.strokeRect(left, 28, barW, 22)
-      const w = (f.hp / MAX_HP) * (barW - 6)
-      ctx.fillStyle = f.hp / MAX_HP > 0.35 ? '#22c55e' : '#ef4444'
+      const w = (f.hp / f.maxHp) * (barW - 6)
+      ctx.fillStyle = f.hp / f.maxHp > 0.35 ? '#22c55e' : '#ef4444'
       ctx.fillRect(flip ? left + 3 + (barW - 6 - w) : left + 3, 31, w, 16)
 
       ctx.font = 'bold 14px ui-monospace, monospace'
@@ -658,7 +832,11 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     ctx.font = 'bold 12px ui-monospace, monospace'
     ctx.fillStyle = '#94a3b8'
-    ctx.fillText(`SCORE ${score}`, VIEW_W / 2, 74)
+    ctx.fillText(
+      versus ? `SCORE ${score}` : `STAGE ${stage + 1}/${OPPONENTS.length} · SCORE ${score}`,
+      VIEW_W / 2,
+      74,
+    )
 
     // Round pips.
     for (let i = 0; i < ROUNDS_TO_WIN; i++) {
@@ -698,7 +876,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
 
     ctx.fillStyle = '#111827'
     for (let i = 0; i < 9; i++) ctx.fillRect(70 + i * 92, 150, 54, FLOOR - 150)
-    ctx.fillStyle = 'rgba(132,204,22,0.12)'
+    // The pit burns red once a boss takes the stage.
+    ctx.fillStyle = p2.boss ? 'rgba(244,63,94,0.16)' : 'rgba(132,204,22,0.12)'
     ctx.beginPath()
     ctx.arc(VIEW_W / 2, FLOOR - 60, 220, 0, Math.PI * 2)
     ctx.fill()
@@ -732,7 +911,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       retroText('[2] VERSUS — LOCAL 2 PLAYER', 296, 22, '#e2e8f0')
       retroText('P1  A/D MOVE · W JUMP · J LIGHT · K HEAVY · L SPECIAL · SPACE/I BLOCK', 360, 15, '#94a3b8')
       retroText('P2  ARROWS MOVE/JUMP · 1 LIGHT · 2 HEAVY · 3 SPECIAL · ↓/0 BLOCK', 384, 15, '#94a3b8')
-      retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 424, 14, '#65a30d')
+      retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 418, 14, '#65a30d')
+      retroText('6 STAGES — SURVIVE TO THE ROT SOVEREIGN', 442, 14, '#f43f5e')
     }
 
     if (phase === 'round-over' || phase === 'match-over') {
@@ -842,7 +1022,7 @@ interface TouchPad {
  */
 function buildTouchPad(): TouchPad {
   const root = document.createElement('div')
-  root.className = 'hidden w-full max-w-[940px] select-none pt-3 touch-none'
+  root.className = 'touch-pad w-full max-w-[940px] select-none pt-3 touch-none'
 
   const heldSet = new Set<string>()
   const tapSet = new Set<string>()
@@ -927,8 +1107,11 @@ function buildTouchPad(): TouchPad {
       tapSet.clear()
     },
     sync: () => {
+      // Visibility is owned by the .touch-pad media query; these flags only say
+      // the cabinet is open, so the pad can never eat desktop screen space.
       const forced = new URLSearchParams(window.location.search).has('touch')
-      root.classList.toggle('hidden', !(forced || isTouchDevice()))
+      root.classList.toggle('is-forced', forced)
+      root.classList.toggle('is-active', isTouchDevice())
     },
     onStart: (fn) => {
       startFn = fn

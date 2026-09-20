@@ -60,3 +60,20 @@ textarea {
   touch-action: pan-y;
   user-select: auto;
 }
+
+/* The fighting cabinet pad belongs to mobile touch viewports only; desktop
+   keeps the full canvas and plays on the keyboard. */
+.touch-pad {
+  display: none;
+}
+
+@media (pointer: coarse) and (hover: none) {
+  .touch-pad.is-active {
+    display: block;
+  }
+}
+
+/* ?touch=1 forces the pad on for desktop checks. */
+.touch-pad.is-forced {
+  display: block;
+}

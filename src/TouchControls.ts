@@ -29,13 +29,14 @@ const STICK_RADIUS = 64
 /** Deflection below this is treated as a resting thumb. */
 const DEAD_ZONE = 0.16
 
-/** True on devices whose primary pointer cannot hover, i.e. touchscreens. */
+/**
+ * True only on phones and tablets: the primary pointer must be coarse and
+ * unable to hover, so a desktop with a touchscreen or trackpad still counts as
+ * a keyboard machine and never gets the on-screen pads.
+ */
 export function isTouchDevice(): boolean {
-  return (
-    'ontouchstart' in window ||
-    navigator.maxTouchPoints > 0 ||
-    window.matchMedia('(pointer: coarse)').matches
-  )
+  const touchCapable = 'ontouchstart' in window || navigator.maxTouchPoints > 0
+  return touchCapable && window.matchMedia('(pointer: coarse) and (hover: none)').matches
 }
 
 const BUTTON_CLASS =
