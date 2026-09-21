@@ -820,14 +820,12 @@ const ARENA_TIME = 480
 const ARENA_DROP_INTERVAL = 60
 /** The Crucible rifle hits 72.5% harder than the stock Old Rifle. */
 const ARENA_RIFLE_BONUS = 1.725
-/** Ally shots take a flat 5% of a zombie's full health; 20 shots kills it. */
-const ALLY_DAMAGE_FRACTION = 0.05
+/** Every drone shot lands a flat 10 damage: ten shots down a 100 HP zombie. */
+const ALLY_DAMAGE = 10
 const ALLY_FIRE_INTERVAL = 0.4
 const ALLY_RANGE = 460
 const ALLY_FOLLOW_DISTANCE = 70
 const ALLY_SPEED = 210
-/** Baseline zombie health, used to size the drone's chip damage on a boss. */
-const ARENA_ZOMBIE_HP = 60
 /** Each lifesteal stack returns 2.5% of the damage dealt as health. */
 const ARENA_LIFESTEAL = 0.025
 /** Each armour stack soaks 15% of every hit taken. */
@@ -851,7 +849,7 @@ const ARENA_PERKS: ArenaPerk[] = [
   {
     id: 'ally',
     name: 'Support Drone Ally',
-    blurb: 'An automated gun that kills a zombie in about 8 seconds',
+    blurb: 'An automated gun dealing a flat 10 damage a shot',
     color: '#38bdf8',
   },
   {
@@ -928,6 +926,10 @@ function emptyArenaPerks(): Record<ArenaPerkId, number> {
     reload: 0,
   }
 }
+
+/** New Game+ runs the whole campaign with tougher, faster infected. */
+const NG_PLUS_HP_SCALE = 1.6
+const NG_PLUS_SPEED = 1.12
 
 /** The Colossus: a wall of scrap that closes fast and hits for 25. */
 const COLOSSUS_MAX_HP = 26000
@@ -1079,6 +1081,9 @@ export class Game {
   private zoom = 1
   private last = 0
   private running = false
+
+  /** Set by the menu when the save is playing the campaign on New Game+. */
+  ngPlus = false
 
   onHud: (hud: Hud) => void = () => {}
   /** Fires once a chapter boss's death burst finishes, to run the outro. */
@@ -1988,17 +1993,22 @@ export class Game {
   /** Arctic infected carry 50% more health; jungle and desert ones more. */
   private get hpScale(): number {
     const chapter = this.mission?.chapter
-    if (chapter === 4) return CH4_HP_SCALE
-    if (chapter === 3) return CH3_HP_SCALE
-    return chapter === 2 ? CH2_HP_SCALE : 1
+    const base = chapter === 4 ? CH4_HP_SCALE : chapter === 3 ? CH3_HP_SCALE : chapter === 2 ? CH2_HP_SCALE : 1
+    return base * (this.ngPlus ? NG_PLUS_HP_SCALE : 1)
   }
 
   /** Later chapters also field quicker variants. */
   private get speedScale(): number {
     const chapter = this.mission?.chapter
-    if (chapter === 4) return CH4_SPEED_SCALE
-    if (chapter === 3) return CH3_SPEED_SCALE
-    return chapter === 2 ? CH2_SPEED_SCALE : 1
+    const base =
+      chapter === 4
+        ? CH4_SPEED_SCALE
+        : chapter === 3
+          ? CH3_SPEED_SCALE
+          : chapter === 2
+            ? CH2_SPEED_SCALE
+            : 1
+    return base * (this.ngPlus ? NG_PLUS_SPEED : 1)
   }
 
   /** Waves arrive this much faster in the jungle and the Rustlands. */
@@ -2134,10 +2144,10 @@ export class Game {
         return
       }
     } else if (mission.type === 'arena') {
-      // The clock alone never ends the Crucible: the Colossus has to fall.
+      // The clock alone never ends the Crucible: the Colossus has to fall,
+      // and its death rolls the chapter's closing cinematic.
       if (this.arenaBossSpawned && this.boss && this.boss.hp <= 0) {
-        this.boss = null
-        this.finish('won')
+        this.startFinaleBurst(this.boss)
         return
       }
     } else if (mission.type === 'race') {
@@ -3890,8 +3900,7 @@ export class Game {
         if (a.cooldown === 0) {
           a.cooldown = ALLY_FIRE_INTERVAL
           a.recoil = 1
-          // Against the boss the drone chips a flat slice of a zombie's worth.
-          boss.hp -= ARENA_ZOMBIE_HP * this.hpScale * ALLY_DAMAGE_FRACTION
+          boss.hp -= ALLY_DAMAGE
           boss.hurt = 0.1
         }
         return
@@ -3902,7 +3911,7 @@ export class Game {
       a.cooldown = ALLY_FIRE_INTERVAL
       a.recoil = 1
       const index = this.enemies.indexOf(target)
-      target.hp -= target.maxHp * ALLY_DAMAGE_FRACTION
+      target.hp -= ALLY_DAMAGE
       if (target.hp <= 0 && index >= 0) this.killEnemy(index)
       playSfx('turret')
     })

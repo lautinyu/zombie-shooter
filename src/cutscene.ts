@@ -22,10 +22,18 @@ interface Line {
   side: 'left' | 'right' | 'system'
   /** Slams the screen red and wipes the NPC sprites as the line opens. */
   flash?: boolean
+  /** Swaps the NPC canvas for a bespoke scene while the line is on screen. */
+  art?: 'dying' | 'ufo'
 }
 
 /** Closing crawl after the Hive Mother falls. */
-const CREDIT_LINES: Record<'chapter1' | 'chapter2', string[]> = {
+const CREDIT_LINES: Record<'chapter1' | 'chapter2' | 'chapter4', string[]> = {
+  chapter4: [
+    'The Rust Colossus is dead. The flies are not.',
+    'Whatever came down out of that sky was waiting for the breeder to fall.',
+    'To Be Continued...',
+    'New Game+ unlocked — carry your arsenal back into a harder world.',
+  ],
   chapter1: [
     'To Be Continued in Chapter 2: Project Horizon...',
     'Thank you for playing!',
@@ -75,7 +83,7 @@ function build(): { story: HTMLElement; dialogue: HTMLElement; credits: HTMLElem
       </div>
       <div id="cutscene-survivor-group" class="text-center">
         <canvas id="cutscene-survivors" width="260" height="140" class="rounded-2xl bg-black/50 ring-1 ring-sky-400/30"></canvas>
-        <div class="mt-2 text-sm font-bold text-sky-300">Survivors of the district</div>
+        <div id="cutscene-survivor-label" class="mt-2 text-sm font-bold text-sky-300">Survivors of the district</div>
       </div>
     </div>
     <div class="mx-auto w-full max-w-3xl rounded-2xl bg-black/80 p-6 ring-1 ring-orange-400/40">
@@ -182,9 +190,99 @@ function leviathanOutroDialogue(id: CharacterId): Line[] {
   ]
 }
 
+/** The dying survivor at the mouth of the Crucible, before the swarm lands. */
+function colossusIntroDialogue(id: CharacterId): Line[] {
+  const hero = characterById(id).name
+  return [
+    {
+      speaker: hero,
+      text: "Hey — hey, stay with me. You're bleeding out. Who did this to you?",
+      side: 'left',
+      art: 'dying',
+    },
+    {
+      speaker: 'Dying Survivor',
+      text: "Don't... don't go down into the salt basin. The flies. Everyone thinks the flies came from the hives \u2014 they didn't. They come out of *it*.",
+      side: 'right',
+    },
+    {
+      speaker: hero,
+      text: 'Out of what? Slowly. What is down there?',
+      side: 'left',
+    },
+    {
+      speaker: 'Dying Survivor',
+      text: 'The Rust Colossus. It breeds them. Every zombie fly infecting this whole region crawled out of that thing\u2019s gut. Kill it and the swarm dies with it.',
+      side: 'right',
+    },
+    {
+      speaker: 'Dying Survivor',
+      text: "But the arena... the arena is packed. Thousands of them, and the flies come in clouds. You won't get a single quiet minute down there. Eight minutes and it wakes up...",
+      side: 'right',
+    },
+    {
+      speaker: hero,
+      text: 'Hold on. Pressure on the wound \u2014 stay awake!',
+      side: 'left',
+    },
+    {
+      speaker: 'System',
+      text: '[VITALS LOST \u2014 SURVIVOR DECEASED. HOSTILE DENSITY: EXTREME.]',
+      side: 'system',
+      flash: true,
+    },
+    {
+      speaker: hero,
+      text: "...Rest easy. I'll burn the breeder for you. Weapons hot.",
+      side: 'left',
+    },
+  ]
+}
+
+/** Relief, then the sky opens: the hook into whatever comes after chapter 4. */
+function colossusOutroDialogue(id: CharacterId): Line[] {
+  const hero = characterById(id).name
+  return [
+    {
+      speaker: hero,
+      text: '*Long breath out*... It\u2019s down. It\u2019s actually down. Eight minutes of hell and a mountain of scrap, and I\u2019m still standing.',
+      side: 'left',
+    },
+    {
+      speaker: hero,
+      text: 'The flies are dropping out of the air everywhere. He was right \u2014 the breeder was the whole swarm. That\u2019s it. The Rustlands are clear.',
+      side: 'left',
+    },
+    {
+      speaker: 'System',
+      text: '[WARNING: UNIDENTIFIED CRAFT — ALTITUDE 400M AND DESCENDING. NOT OF TERRESTRIAL MANUFACTURE.]',
+      side: 'system',
+      flash: true,
+      art: 'ufo',
+    },
+    {
+      speaker: hero,
+      text: 'That... that is not a gunship. Nothing we ever built hums like that.',
+      side: 'left',
+    },
+    {
+      speaker: 'System',
+      text: '[DROP PODS RELEASED. x9 ORGANISMS INBOUND — WINGED, TENTACLED, BIOSIGNATURE UNKNOWN.]',
+      side: 'system',
+      art: 'ufo',
+    },
+    {
+      speaker: hero,
+      text: 'Purple things... wings, and all those tentacles. The Colossus was never the source. Something put it here. Reload. This war just got a lot bigger.',
+      side: 'left',
+    },
+  ]
+}
+
 function bossDialogue(id: CharacterId, boss: BossKind): Line[] {
   const hero = characterById(id).name
   if (boss === 'canopy-leviathan') return leviathanIntroDialogue(id)
+  if (boss === 'rust-colossus') return colossusIntroDialogue(id)
   if (boss === 'runner-alpha') {
     return [
       {
@@ -300,6 +398,109 @@ function drawPortrait(id: CharacterId) {
   ctx.translate(canvas.width / 2, canvas.height / 2)
   drawCharacterSkin(ctx, id, 52, -Math.PI / 2, false)
   ctx.restore()
+}
+
+/** Bespoke scenes for the Crucible: a bleeding survivor, then the craft. */
+function drawScene(kind: 'dying' | 'ufo') {
+  const canvas = document.getElementById('cutscene-survivors')
+  const label = document.getElementById('cutscene-survivor-label')
+  if (!(canvas instanceof HTMLCanvasElement)) return
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return
+  ctx.clearRect(0, 0, canvas.width, canvas.height)
+  if (kind === 'dying') {
+    if (label) {
+      label.textContent = 'Dying survivor'
+      label.className = 'mt-2 text-sm font-bold text-red-300'
+    }
+    ctx.save()
+    ctx.translate(130, 92)
+    ctx.fillStyle = 'rgba(127,29,29,0.55)'
+    ctx.beginPath()
+    ctx.ellipse(0, 22, 62, 14, 0, 0, Math.PI * 2)
+    ctx.fill()
+    // Slumped against a wreck: body low, head tipped back.
+    ctx.fillStyle = '#9a7b5a'
+    ctx.beginPath()
+    ctx.ellipse(6, 4, 46, 20, -0.12, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#d6bfa5'
+    ctx.beginPath()
+    ctx.arc(-40, -12, 20, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#7f1d1d'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(-46, -8)
+    ctx.lineTo(-34, -2)
+    ctx.stroke()
+    ctx.fillStyle = '#7f1d1d'
+    for (const [x, y, r] of [[18, 16, 7], [34, 22, 5], [-4, 24, 4]]) {
+      ctx.beginPath()
+      ctx.arc(x, y, r, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    ctx.restore()
+    return
+  }
+  if (label) {
+    label.textContent = 'Unidentified craft'
+    label.className = 'mt-2 text-sm font-bold text-fuchsia-300'
+  }
+  // Saucer overhead, dropping winged tentacle things into the salt.
+  ctx.save()
+  ctx.translate(130, 44)
+  ctx.fillStyle = 'rgba(217,70,239,0.25)'
+  ctx.beginPath()
+  ctx.moveTo(-70, 84)
+  ctx.lineTo(-30, 8)
+  ctx.lineTo(30, 8)
+  ctx.lineTo(70, 84)
+  ctx.closePath()
+  ctx.fill()
+  ctx.fillStyle = '#334155'
+  ctx.beginPath()
+  ctx.ellipse(0, 4, 60, 15, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#a5f3fc'
+  ctx.beginPath()
+  ctx.ellipse(0, -8, 26, 16, 0, Math.PI, 0)
+  ctx.fill()
+  ctx.fillStyle = '#e879f9'
+  for (const x of [-34, 0, 34]) {
+    ctx.beginPath()
+    ctx.arc(x, 10, 4, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.restore()
+  for (const [x, y, s] of [[58, 96, 1], [130, 108, 1.2], [200, 92, 0.9]]) {
+    ctx.save()
+    ctx.translate(x, y)
+    ctx.scale(s, s)
+    ctx.fillStyle = '#7e22ce'
+    ctx.beginPath()
+    ctx.ellipse(-22, -8, 16, 7, -0.5, 0, Math.PI * 2)
+    ctx.ellipse(22, -8, 16, 7, 0.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#a855f7'
+    ctx.beginPath()
+    ctx.arc(0, 0, 14, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#7e22ce'
+    ctx.lineWidth = 3
+    for (const t of [-8, -3, 3, 8]) {
+      ctx.beginPath()
+      ctx.moveTo(t, 10)
+      ctx.quadraticCurveTo(t * 1.8, 20, t * 0.6, 28)
+      ctx.stroke()
+    }
+    ctx.fillStyle = '#fde047'
+    ctx.beginPath()
+    ctx.arc(-5, -3, 3, 0, Math.PI * 2)
+    ctx.arc(5, -3, 3, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
 }
 
 /** Three simple NPC sprites so the hero has someone to talk to. */
@@ -432,6 +633,11 @@ export function playOutro(id: CharacterId, boss: BossKind, onDone: () => void) {
     runDialogue(id, leviathanOutroDialogue(id), true, onDone)
     return
   }
+  // The Colossus ends on the UFO reveal, then the chapter 4 crawl.
+  if (boss === 'rust-colossus') {
+    runDialogue(id, colossusOutroDialogue(id), true, () => playCredits('chapter4', onDone))
+    return
+  }
   const chapter2 = boss === 'cryo-stalker'
   const lines = chapter2 ? cryoOutroDialogue(id) : outroDialogue(id)
   runDialogue(id, lines, true, () =>
@@ -455,7 +661,7 @@ function flashDanger() {
   playSfx('boss-roar')
 }
 
-function playCredits(chapter: 'chapter1' | 'chapter2', onDone: () => void) {
+function playCredits(chapter: keyof typeof CREDIT_LINES, onDone: () => void) {
   const { credits } = panelsReady()
   show(credits, true, 'block')
   const crawl = document.getElementById('credits-crawl')
@@ -528,6 +734,10 @@ function runDialogue(id: CharacterId, lines: Line[], overlay: boolean, onDone: (
       flashDanger()
       // The camp and its guards are gone the moment the slam lands.
       document.getElementById('cutscene-survivor-group')?.classList.add('hidden')
+    }
+    if (line.art) {
+      document.getElementById('cutscene-survivor-group')?.classList.remove('hidden')
+      drawScene(line.art)
     }
     speaker.textContent = line.speaker
     speaker.className = `text-sm font-black uppercase tracking-widest ${

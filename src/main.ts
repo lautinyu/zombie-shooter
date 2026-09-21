@@ -31,7 +31,9 @@ import {
   missionChipReward,
   missionCoreReward,
   missionReward,
+  ngPlusUnlocked,
   saveProfile,
+  startNgPlus,
 } from './profile'
 import { CHARACTERS, characterById } from './characters'
 import type { CharacterId } from './characters'
@@ -534,8 +536,47 @@ function renderChapterFour() {
   campaignEl.appendChild(chapterButton(1))
 }
 
+/**
+ * Post-campaign banner: restarts the mission board with every weapon,
+ * survivor and currency intact while the infected come back harder.
+ */
+function ngPlusPanel(): HTMLElement {
+  const wrap = document.createElement('div')
+  const active = profile.ngPlus > 0
+  wrap.className = `rounded-2xl p-4 ring-1 ${
+    active
+      ? 'bg-fuchsia-500/10 ring-fuchsia-400/40'
+      : 'bg-violet-500/5 ring-violet-400/30'
+  }`
+  wrap.innerHTML = `
+    <h3 class="text-sm font-black uppercase tracking-wider text-fuchsia-200">New Game+${
+      active ? ` · Cycle ${profile.ngPlus}` : ''
+    }</h3>
+    <p class="mt-1 text-xs text-slate-400">The Rustlands are clear, but whatever the craft dropped is still out there. Run the campaign again with every weapon, survivor and currency you own — the infected come back with +60% health and +12% speed. No new stages yet.</p>
+  `
+  const btn = document.createElement('button')
+  btn.className =
+    'mt-3 w-full rounded-xl bg-fuchsia-500/20 px-6 py-3 text-center text-base font-black tracking-wide text-fuchsia-100 ring-2 ring-fuchsia-400/60 transition hover:bg-fuchsia-500/30'
+  btn.textContent = active ? `♻️ RESTART NEW GAME+ (CYCLE ${profile.ngPlus + 1})` : '♻️ START NEW GAME+'
+  btn.addEventListener('click', () => {
+    const ok = window.confirm(
+      'Start New Game+? Mission progress resets to Chapter 1; weapons, currency and survivors carry over and enemies get tougher.'
+    )
+    if (!ok) return
+    Object.assign(profile, startNgPlus(profile))
+    saveProfile(profile)
+    game.ngPlus = true
+    chapter = 1
+    renderCampaign()
+    persist()
+  })
+  wrap.appendChild(btn)
+  return wrap
+}
+
 function renderCampaign() {
   campaignEl.innerHTML = ''
+  if (ngPlusUnlocked(profile)) campaignEl.appendChild(ngPlusPanel())
   if (chapter === 4) {
     renderChapterFour()
     return
@@ -711,6 +752,13 @@ function launch(m: Mission) {
   const roster = [characterById(activeCharacter())]
   if (profile.players === 2) roster.push(characterById(secondCharacter()))
   const loadout = [weaponById(profile.primary), weaponById(profile.secondary)]
+  // The Crucible opens on the dying survivor's warning, then the swarm starts.
+  if (m.type === 'arena') {
+    show(menu, false)
+    game.startMission(m, loadout, roster, true)
+    playBossDialogue(activeCharacter(), m.boss ?? 'rust-colossus', () => game.resume())
+    return
+  }
   // Boss arenas load frozen behind the briefing scene, then cut to the reveal.
   if (m.type === 'boss') {
     show(menu, false)
@@ -1550,6 +1598,7 @@ renderDetail()
 renderCharacters()
 renderIntro()
 game.textures = profile.textures ?? 'classic'
+game.ngPlus = profile.ngPlus > 0
 game.onStateChange('menu')
 stopMusic()
 // Every page load opens on the lore crawl before any menu is shown.
