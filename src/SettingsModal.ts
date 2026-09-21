@@ -13,6 +13,8 @@ import {
   updateSettings,
 } from './settings'
 import { playSfx } from './audio'
+import { clearProfile } from './profile'
+import { clearArcadeStats } from './arcadeStats'
 
 export interface SettingsPanel {
   open: (tab?: Tab) => void
@@ -45,10 +47,13 @@ export function mountSettings(): SettingsPanel {
   let tab: Tab = 'audio'
   let capture: Capture | null = null
   let open = false
+  /** Second stage of the wipe: the confirm button only shows once armed. */
+  let resetArmed = false
 
   const close = () => {
     open = false
     capture = null
+    resetArmed = false
     overlay.classList.add('hidden')
     overlay.classList.remove('flex')
   }
@@ -96,7 +101,22 @@ export function mountSettings(): SettingsPanel {
       <p id="profile-name-hint" class="mt-1 text-[11px] text-slate-500">${NAME_MIN}–${NAME_MAX} characters.</p>
       <div class="mb-2 mt-6 text-xs font-black uppercase tracking-widest text-slate-300">Profile Avatar</div>
       <div class="flex flex-wrap gap-3">${choices}</div>
-      <p class="mt-6 text-xs text-slate-500">Name, avatar and volume are saved to this browser automatically.</p>`
+      <p class="mt-6 text-xs text-slate-500">Name, avatar and volume are saved to this browser automatically.</p>
+      <div class="mt-8 rounded-xl bg-rose-500/5 p-4 ring-1 ring-rose-400/30">
+        <div class="text-xs font-black uppercase tracking-widest text-rose-300">Danger Zone</div>
+        <p class="mt-1 text-xs text-slate-400">Wipes this browser's save: every mission unlock, weapon, currency balance, survivor pick and arcade high score goes back to zero.</p>
+        ${
+          resetArmed
+            ? `<div class="mt-3 rounded-lg bg-rose-500/10 p-3 ring-1 ring-rose-400/50">
+                 <div class="text-xs font-bold text-rose-200">Are you sure? This cannot be undone.</div>
+                 <div class="mt-3 flex flex-wrap gap-2">
+                   <button id="data-reset-confirm" class="rounded-lg bg-rose-500/80 px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-rose-500">Yes, Reset Everything</button>
+                   <button id="data-reset-cancel" class="rounded-lg bg-white/10 px-4 py-2 text-xs font-bold text-slate-200 hover:bg-white/20">Cancel</button>
+                 </div>
+               </div>`
+            : `<button id="data-reset" class="mt-3 rounded-lg bg-rose-500/15 px-5 py-2 text-xs font-black uppercase tracking-widest text-rose-300 ring-1 ring-rose-400/40 hover:bg-rose-500/25">Reset Save Data</button>`
+        }
+      </div>`
   }
 
   const audioTab = () => {
@@ -195,6 +215,21 @@ export function mountSettings(): SettingsPanel {
         render()
       })
     }
+
+    panel.querySelector('#data-reset')?.addEventListener('click', () => {
+      resetArmed = true
+      render()
+    })
+    panel.querySelector('#data-reset-cancel')?.addEventListener('click', () => {
+      resetArmed = false
+      render()
+    })
+    panel.querySelector('#data-reset-confirm')?.addEventListener('click', () => {
+      clearProfile()
+      clearArcadeStats()
+      // Reload so every menu, loadout and HUD rebuilds from the blank save.
+      window.location.reload()
+    })
 
     const slider = (id: string, key: 'bgmVolume' | 'sfxVolume') => {
       const input = panel.querySelector<HTMLInputElement>(`#${id}`)

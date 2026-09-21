@@ -927,10 +927,6 @@ function emptyArenaPerks(): Record<ArenaPerkId, number> {
   }
 }
 
-/** New Game+ runs the whole campaign with tougher, faster infected. */
-const NG_PLUS_HP_SCALE = 1.6
-const NG_PLUS_SPEED = 1.12
-
 /** The Colossus: a wall of scrap that closes fast and hits for 25. */
 const COLOSSUS_MAX_HP = 26000
 const COLOSSUS_RADIUS = 62
@@ -1081,9 +1077,6 @@ export class Game {
   private zoom = 1
   private last = 0
   private running = false
-
-  /** Set by the menu when the save is playing the campaign on New Game+. */
-  ngPlus = false
 
   onHud: (hud: Hud) => void = () => {}
   /** Fires once a chapter boss's death burst finishes, to run the outro. */
@@ -1993,22 +1986,17 @@ export class Game {
   /** Arctic infected carry 50% more health; jungle and desert ones more. */
   private get hpScale(): number {
     const chapter = this.mission?.chapter
-    const base = chapter === 4 ? CH4_HP_SCALE : chapter === 3 ? CH3_HP_SCALE : chapter === 2 ? CH2_HP_SCALE : 1
-    return base * (this.ngPlus ? NG_PLUS_HP_SCALE : 1)
+    if (chapter === 4) return CH4_HP_SCALE
+    if (chapter === 3) return CH3_HP_SCALE
+    return chapter === 2 ? CH2_HP_SCALE : 1
   }
 
   /** Later chapters also field quicker variants. */
   private get speedScale(): number {
     const chapter = this.mission?.chapter
-    const base =
-      chapter === 4
-        ? CH4_SPEED_SCALE
-        : chapter === 3
-          ? CH3_SPEED_SCALE
-          : chapter === 2
-            ? CH2_SPEED_SCALE
-            : 1
-    return base * (this.ngPlus ? NG_PLUS_SPEED : 1)
+    if (chapter === 4) return CH4_SPEED_SCALE
+    if (chapter === 3) return CH3_SPEED_SCALE
+    return chapter === 2 ? CH2_SPEED_SCALE : 1
   }
 
   /** Waves arrive this much faster in the jungle and the Rustlands. */

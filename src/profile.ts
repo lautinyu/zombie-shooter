@@ -29,23 +29,26 @@ export interface Profile {
   completed: string[]
   /** Chosen render style; null until the intro splash is answered. */
   textures: TexturePack | null
-  /** Completed New Game+ cycles; 0 is the first run through the campaign. */
-  ngPlus: number
 }
 
 /** The Chapter 4 finale: clearing it opens New Game+. */
 export const FINAL_MISSION_ID = 'ch4-8'
 
 export function ngPlusUnlocked(profile: Profile): boolean {
-  return profile.completed.includes(FINAL_MISSION_ID) || profile.ngPlus > 0
+  return profile.completed.includes(FINAL_MISSION_ID)
 }
 
-/**
- * Rewinds campaign progress for another, harder lap: weapons, currency,
- * survivors and settings all carry over, only mission clears are wiped.
- */
-export function startNgPlus(profile: Profile): Profile {
-  return { ...profile, completed: [], ngPlus: profile.ngPlus + 1 }
+/** Wipes the save entirely: progress, weapons, currency and survivors. */
+export function freshProfile(): Profile {
+  return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }
+}
+
+export function clearProfile() {
+  try {
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // storage unavailable (private mode) — nothing persisted to clear
+  }
 }
 
 const DEFAULT_PROFILE: Profile = {
@@ -61,7 +64,6 @@ const DEFAULT_PROFILE: Profile = {
   players: 1,
   completed: [],
   textures: null,
-  ngPlus: 0,
 }
 
 function isWeaponId(value: unknown): value is WeaponId {
@@ -117,9 +119,6 @@ export function loadProfile(): Profile {
       players: record.players === 2 ? 2 : 1,
       completed: Array.isArray(record.completed) ? record.completed.filter(isMissionId) : [],
       textures: isTexturePack(record.textures) ? record.textures : null,
-      // Saves written before New Game+ existed are all on their first lap.
-      ngPlus:
-        typeof record.ngPlus === 'number' && record.ngPlus > 0 ? Math.floor(record.ngPlus) : 0,
     }
   } catch {
     return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }

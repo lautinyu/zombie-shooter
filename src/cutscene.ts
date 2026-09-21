@@ -32,7 +32,7 @@ const CREDIT_LINES: Record<'chapter1' | 'chapter2' | 'chapter4', string[]> = {
     'The Rust Colossus is dead. The flies are not.',
     'Whatever came down out of that sky was waiting for the breeder to fall.',
     'To Be Continued...',
-    'New Game+ unlocked — carry your arsenal back into a harder world.',
+    'New Game+ unlocked — the alien threat campaign is coming soon.',
   ],
   chapter1: [
     'To Be Continued in Chapter 2: Project Horizon...',

@@ -61,6 +61,14 @@ export function submitScore(game: ArcadeGameId, score: number): boolean {
   return true
 }
 
+/** Drops every cabinet record and play count, for a full save wipe. */
+export function clearArcadeStats(): void {
+  for (const key of [...Object.values(HIGH_SCORE_KEYS), ...Object.values(PLAY_COUNT_KEYS)]) {
+    window.localStorage.removeItem(key)
+  }
+  window.localStorage.removeItem(GAUNTLET_STATS_KEY)
+}
+
 export function readGauntletStats(): GauntletStats {
   const raw = window.localStorage.getItem(GAUNTLET_STATS_KEY)
   if (raw === null) return { maxDistance: 0, zombiesKilled: 0 }

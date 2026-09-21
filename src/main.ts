@@ -33,7 +33,6 @@ import {
   missionReward,
   ngPlusUnlocked,
   saveProfile,
-  startNgPlus,
 } from './profile'
 import { CHARACTERS, characterById } from './characters'
 import type { CharacterId } from './characters'
@@ -537,40 +536,33 @@ function renderChapterFour() {
 }
 
 /**
- * Post-campaign banner: restarts the mission board with every weapon,
- * survivor and currency intact while the infected come back harder.
+ * Post-campaign teaser: New Game+ is the door to the alien threat that came
+ * down after the Colossus. Nothing resets and nothing scales — it only shows
+ * what is being built next.
  */
 function ngPlusPanel(): HTMLElement {
   const wrap = document.createElement('div')
-  const active = profile.ngPlus > 0
-  wrap.className = `rounded-2xl p-4 ring-1 ${
-    active
-      ? 'bg-fuchsia-500/10 ring-fuchsia-400/40'
-      : 'bg-violet-500/5 ring-violet-400/30'
-  }`
+  wrap.className = 'rounded-2xl bg-fuchsia-500/5 p-4 ring-1 ring-fuchsia-400/30'
   wrap.innerHTML = `
-    <h3 class="text-sm font-black uppercase tracking-wider text-fuchsia-200">New Game+${
-      active ? ` · Cycle ${profile.ngPlus}` : ''
-    }</h3>
-    <p class="mt-1 text-xs text-slate-400">The Rustlands are clear, but whatever the craft dropped is still out there. Run the campaign again with every weapon, survivor and currency you own — the infected come back with +60% health and +12% speed. No new stages yet.</p>
+    <h3 class="text-sm font-black uppercase tracking-wider text-fuchsia-200">🛸 New Game+ · Unlocked</h3>
+    <p class="mt-1 text-xs text-slate-400">You put the Rust Colossus down and watched something far worse drop out of that craft. New Game+ is where the alien threat campaign will live — your gear, currency and campaign progress stay exactly as they are.</p>
   `
   const btn = document.createElement('button')
   btn.className =
     'mt-3 w-full rounded-xl bg-fuchsia-500/20 px-6 py-3 text-center text-base font-black tracking-wide text-fuchsia-100 ring-2 ring-fuchsia-400/60 transition hover:bg-fuchsia-500/30'
-  btn.textContent = active ? `♻️ RESTART NEW GAME+ (CYCLE ${profile.ngPlus + 1})` : '♻️ START NEW GAME+'
+  btn.textContent = '🛸 ENTER NEW GAME+'
+  const note = document.createElement('div')
+  note.className = 'mt-3 hidden rounded-xl bg-black/40 p-4 text-xs text-slate-300 ring-1 ring-fuchsia-400/40'
+  note.innerHTML = `
+    <div class="text-sm font-black uppercase tracking-widest text-fuchsia-300">🔒 Coming Soon</div>
+    <p class="mt-2">The winged, tentacled things the UFO dropped are still out there, and the missions that hunt them are in development. No new stages are playable yet — nothing has been reset, and your save is untouched.</p>
+    <p class="mt-2 text-slate-500">Planned: alien hive sites, the drop-pod swarms, and the craft itself.</p>
+  `
   btn.addEventListener('click', () => {
-    const ok = window.confirm(
-      'Start New Game+? Mission progress resets to Chapter 1; weapons, currency and survivors carry over and enemies get tougher.'
-    )
-    if (!ok) return
-    Object.assign(profile, startNgPlus(profile))
-    saveProfile(profile)
-    game.ngPlus = true
-    chapter = 1
-    renderCampaign()
-    persist()
+    note.classList.toggle('hidden')
   })
   wrap.appendChild(btn)
+  wrap.appendChild(note)
   return wrap
 }
 
@@ -1598,7 +1590,6 @@ renderDetail()
 renderCharacters()
 renderIntro()
 game.textures = profile.textures ?? 'classic'
-game.ngPlus = profile.ngPlus > 0
 game.onStateChange('menu')
 stopMusic()
 // Every page load opens on the lore crawl before any menu is shown.
