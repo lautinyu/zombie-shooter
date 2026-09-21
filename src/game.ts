@@ -826,8 +826,8 @@ const ALLY_FIRE_INTERVAL = 0.4
 const ALLY_RANGE = 460
 const ALLY_FOLLOW_DISTANCE = 70
 const ALLY_SPEED = 210
-/** Each lifesteal stack returns 2.5% of the damage dealt as health. */
-const ARENA_LIFESTEAL = 0.025
+/** Each lifesteal stack returns 1.5% of the damage dealt as health. */
+const ARENA_LIFESTEAL = 0.015
 /** Each armour stack soaks 15% of every hit taken. */
 const ARENA_ARMOUR = 0.15
 /** Each explosive stack splashes 10% of the hit onto everything nearby. */
@@ -855,7 +855,7 @@ const ARENA_PERKS: ArenaPerk[] = [
   {
     id: 'lifesteal',
     name: 'Leech Coupling',
-    blurb: '+2.5% of all damage dealt returned as health',
+    blurb: '+1.5% of all damage dealt returned as health',
     color: '#f87171',
   },
   {

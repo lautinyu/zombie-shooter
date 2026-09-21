@@ -76,13 +76,13 @@ function build(): { story: HTMLElement; dialogue: HTMLElement; credits: HTMLElem
   dialogue.className =
     'absolute inset-0 z-40 hidden cursor-pointer flex-col justify-end bg-slate-950/95 p-8'
   dialogue.innerHTML = `
-    <div class="pointer-events-none absolute inset-x-0 top-16 flex items-end justify-center gap-12">
+    <div class="pointer-events-none absolute inset-x-0 top-24 flex items-end justify-center gap-12 px-8">
       <div class="text-center">
         <canvas id="cutscene-portrait" width="140" height="140" class="rounded-2xl bg-black/50 ring-1 ring-emerald-400/40"></canvas>
         <div id="cutscene-portrait-name" class="mt-2 text-sm font-bold text-emerald-300"></div>
       </div>
       <div id="cutscene-survivor-group" class="text-center">
-        <canvas id="cutscene-survivors" width="260" height="140" class="rounded-2xl bg-black/50 ring-1 ring-sky-400/30"></canvas>
+        <canvas id="cutscene-survivors" width="260" height="140" class="max-h-[42vh] rounded-2xl bg-black/50 ring-1 ring-sky-400/30"></canvas>
         <div id="cutscene-survivor-label" class="mt-2 text-sm font-bold text-sky-300">Survivors of the district</div>
       </div>
     </div>
@@ -407,40 +407,16 @@ function drawScene(kind: 'dying' | 'ufo') {
   if (!(canvas instanceof HTMLCanvasElement)) return
   const ctx = canvas.getContext('2d')
   if (!ctx) return
+  // Scene art needs more room than the three little survivor busts.
+  canvas.width = 340
+  canvas.height = 190
   ctx.clearRect(0, 0, canvas.width, canvas.height)
   if (kind === 'dying') {
     if (label) {
       label.textContent = 'Dying survivor'
       label.className = 'mt-2 text-sm font-bold text-red-300'
     }
-    ctx.save()
-    ctx.translate(130, 92)
-    ctx.fillStyle = 'rgba(127,29,29,0.55)'
-    ctx.beginPath()
-    ctx.ellipse(0, 22, 62, 14, 0, 0, Math.PI * 2)
-    ctx.fill()
-    // Slumped against a wreck: body low, head tipped back.
-    ctx.fillStyle = '#9a7b5a'
-    ctx.beginPath()
-    ctx.ellipse(6, 4, 46, 20, -0.12, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.fillStyle = '#d6bfa5'
-    ctx.beginPath()
-    ctx.arc(-40, -12, 20, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = '#7f1d1d'
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.moveTo(-46, -8)
-    ctx.lineTo(-34, -2)
-    ctx.stroke()
-    ctx.fillStyle = '#7f1d1d'
-    for (const [x, y, r] of [[18, 16, 7], [34, 22, 5], [-4, 24, 4]]) {
-      ctx.beginPath()
-      ctx.arc(x, y, r, 0, Math.PI * 2)
-      ctx.fill()
-    }
-    ctx.restore()
+    drawDyingSurvivor(ctx, canvas.width, canvas.height)
     return
   }
   if (label) {
@@ -449,7 +425,7 @@ function drawScene(kind: 'dying' | 'ufo') {
   }
   // Saucer overhead, dropping winged tentacle things into the salt.
   ctx.save()
-  ctx.translate(130, 44)
+  ctx.translate(170, 54)
   ctx.fillStyle = 'rgba(217,70,239,0.25)'
   ctx.beginPath()
   ctx.moveTo(-70, 84)
@@ -473,7 +449,7 @@ function drawScene(kind: 'dying' | 'ufo') {
     ctx.fill()
   }
   ctx.restore()
-  for (const [x, y, s] of [[58, 96, 1], [130, 108, 1.2], [200, 92, 0.9]]) {
+  for (const [x, y, s] of [[80, 128, 1], [170, 146, 1.2], [262, 124, 0.9]]) {
     ctx.save()
     ctx.translate(x, y)
     ctx.scale(s, s)
@@ -503,10 +479,193 @@ function drawScene(kind: 'dying' | 'ufo') {
   }
 }
 
+/**
+ * The wounded survivor of the Crucible intro: propped against a wrecked
+ * hauler panel, legs sprawled in the salt, one hand clamped over the gut
+ * wound, head tipped back against the metal.
+ */
+function drawDyingSurvivor(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const groundY = h - 34
+
+  // Backdrop: dusk over the salt flats with a rusted hull slab to lean on.
+  const sky = ctx.createLinearGradient(0, 0, 0, groundY)
+  sky.addColorStop(0, '#2c2620')
+  sky.addColorStop(1, '#7a4c2c')
+  ctx.fillStyle = sky
+  ctx.fillRect(0, 0, w, groundY)
+  ctx.fillStyle = '#2b2620'
+  ctx.fillRect(0, groundY, w, h - groundY)
+  ctx.fillStyle = '#3b3129'
+  ctx.beginPath()
+  ctx.moveTo(38, groundY)
+  ctx.lineTo(52, 42)
+  ctx.lineTo(126, 34)
+  ctx.lineTo(132, groundY)
+  ctx.closePath()
+  ctx.fill()
+  ctx.fillStyle = '#5b4632'
+  ctx.fillRect(52, 56, 70, 6)
+  ctx.fillRect(58, 92, 62, 5)
+
+  ctx.save()
+  ctx.translate(120, groundY)
+
+  // Blood pool spreading out from under him.
+  ctx.fillStyle = 'rgba(120,20,20,0.6)'
+  ctx.beginPath()
+  ctx.ellipse(28, 2, 74, 15, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Legs: sprawled forward along the ground, boots pointing out.
+  ctx.strokeStyle = '#4b5563'
+  ctx.lineCap = 'round'
+  ctx.lineWidth = 15
+  ctx.beginPath()
+  ctx.moveTo(4, -16)
+  ctx.quadraticCurveTo(52, -10, 92, -6)
+  ctx.stroke()
+  ctx.lineWidth = 13
+  ctx.beginPath()
+  ctx.moveTo(4, -8)
+  ctx.quadraticCurveTo(46, -2, 78, -14)
+  ctx.stroke()
+  ctx.fillStyle = '#1f2937'
+  ctx.beginPath()
+  ctx.ellipse(96, -8, 12, 8, -0.2, 0, Math.PI * 2)
+  ctx.ellipse(82, -18, 11, 8, -0.6, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Torso: leaning back into the slab, jacket open over a filthy shirt.
+  ctx.save()
+  ctx.translate(-8, -34)
+  ctx.rotate(-0.34)
+  ctx.fillStyle = '#6b705c'
+  ctx.beginPath()
+  ctx.roundRect(-18, -30, 38, 58, 12)
+  ctx.fill()
+  ctx.fillStyle = '#8a8f78'
+  ctx.beginPath()
+  ctx.roundRect(-18, -30, 14, 58, 10)
+  ctx.fill()
+  ctx.fillStyle = '#9ca3af'
+  ctx.beginPath()
+  ctx.roundRect(-4, -24, 14, 46, 6)
+  ctx.fill()
+  // Gut wound, soaked through the shirt.
+  ctx.fillStyle = '#7f1d1d'
+  ctx.beginPath()
+  ctx.ellipse(4, 8, 11, 13, 0.2, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = 'rgba(153,27,27,0.75)'
+  ctx.beginPath()
+  ctx.ellipse(2, 20, 8, 10, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+
+  // Near arm clamped over the wound; far arm limp in the salt.
+  ctx.strokeStyle = '#6b705c'
+  ctx.lineWidth = 11
+  ctx.beginPath()
+  ctx.moveTo(-18, -52)
+  ctx.quadraticCurveTo(2, -40, -2, -26)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(-24, -48)
+  ctx.quadraticCurveTo(-42, -30, -34, -8)
+  ctx.stroke()
+  ctx.fillStyle = '#c9a888'
+  ctx.beginPath()
+  ctx.arc(-2, -24, 7, 0, Math.PI * 2)
+  ctx.arc(-34, -6, 7, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = 'rgba(127,29,29,0.85)'
+  ctx.beginPath()
+  ctx.arc(-2, -24, 7, 0, Math.PI * 2)
+  ctx.fill()
+
+  // Head tipped back against the hull: jaw up, eyes half shut.
+  ctx.save()
+  ctx.translate(-30, -74)
+  ctx.rotate(-0.5)
+  ctx.fillStyle = '#c9a888'
+  ctx.beginPath()
+  ctx.ellipse(0, 0, 13, 15, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#7b5e42'
+  ctx.beginPath()
+  ctx.ellipse(-2, -10, 13, 7, 0, Math.PI, 0)
+  ctx.fill()
+  // Headband sits on the brow, not over the eyes.
+  ctx.fillStyle = '#7f1d1d'
+  ctx.beginPath()
+  ctx.roundRect(-13, -11, 25, 5, 2)
+  ctx.fill()
+  // Eyes squeezed shut, mouth open gasping for air.
+  ctx.strokeStyle = '#3f2d20'
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  ctx.moveTo(-7, -1)
+  ctx.lineTo(-1, -2)
+  ctx.moveTo(3, -2)
+  ctx.lineTo(9, -3)
+  ctx.stroke()
+  ctx.fillStyle = '#4a2a25'
+  ctx.beginPath()
+  ctx.ellipse(3, 7, 4, 3, 0.2, 0, Math.PI * 2)
+  ctx.fill()
+  // Blood running from the corner of the mouth down the jaw.
+  ctx.strokeStyle = '#991b1b'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(7, 8)
+  ctx.quadraticCurveTo(6, 13, 9, 16)
+  ctx.stroke()
+  ctx.restore()
+
+  // His spent rifle, dropped just out of reach.
+  ctx.save()
+  ctx.translate(128, -4)
+  ctx.rotate(0.08)
+  ctx.fillStyle = '#52525b'
+  ctx.fillRect(-28, -4, 56, 6)
+  ctx.fillStyle = '#a16207'
+  ctx.beginPath()
+  ctx.roundRect(-36, -6, 14, 10, 3)
+  ctx.fill()
+  ctx.fillStyle = '#3f3f46'
+  ctx.fillRect(-6, -9, 5, 6)
+  ctx.restore()
+  ctx.restore()
+
+  // Fly swarm drifting over him, the thing he is warning about.
+  ctx.fillStyle = 'rgba(163,230,53,0.75)'
+  for (const [x, y, r] of [
+    [206, 54, 2.5],
+    [226, 70, 2],
+    [244, 46, 2.2],
+    [262, 78, 1.8],
+    [232, 96, 2.4],
+    [284, 60, 2],
+  ]) {
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  // Vignette so the sprite sits inside the frame instead of on top of it.
+  const vig = ctx.createRadialGradient(w / 2, h / 2, h * 0.55, w / 2, h / 2, h * 1.1)
+  vig.addColorStop(0, 'rgba(0,0,0,0)')
+  vig.addColorStop(1, 'rgba(0,0,0,0.5)')
+  ctx.fillStyle = vig
+  ctx.fillRect(0, 0, w, h)
+}
+
 /** Three simple NPC sprites so the hero has someone to talk to. */
 function drawSurvivors() {
   const canvas = document.getElementById('cutscene-survivors')
   if (!(canvas instanceof HTMLCanvasElement)) return
+  // Restore the bust-sized frame after a full-scene drawing.
+  canvas.width = 260
+  canvas.height = 140
   const ctx = canvas.getContext('2d')
   if (!ctx) return
   ctx.clearRect(0, 0, canvas.width, canvas.height)
@@ -706,6 +865,12 @@ function runDialogue(id: CharacterId, lines: Line[], overlay: boolean, onDone: (
   const body: HTMLElement = textEl
   const speaker: HTMLElement = speakerEl
 
+  // The mission HUD sits in the same corners as the portraits and header,
+  // so it stays down for the whole scene and comes back with the game.
+  const hud = document.getElementById('hud')
+  const hudWasVisible = hud !== null && !hud.classList.contains('hidden')
+  if (hudWasVisible) hud?.classList.add('hidden')
+
   show(dialogue, true, 'flex')
   drawPortrait(id)
   drawSurvivors()
@@ -724,6 +889,7 @@ function runDialogue(id: CharacterId, lines: Line[], overlay: boolean, onDone: (
     stopTyping()
     dialogue.removeEventListener('click', advance)
     show(dialogue, false, 'flex')
+    if (hudWasVisible) hud?.classList.remove('hidden')
     stopMusic()
     onDone()
   }
