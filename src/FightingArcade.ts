@@ -348,7 +348,7 @@ const KEYS: Record<1 | 2, Record<ActionId, string[]>> = {
 export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   const overlay = document.createElement('div')
   overlay.className =
-    'fixed inset-0 z-40 hidden flex-col items-center justify-center bg-black/98 p-3'
+    'fighter-overlay fixed inset-0 z-40 hidden flex-col items-center justify-center overflow-y-auto bg-black/98 p-3'
   overlay.innerHTML = `
     <div class="flex w-full max-w-[940px] items-center justify-between pb-2">
       <div class="text-xs font-black uppercase tracking-[0.35em] text-lime-400">Rot Fighter</div>
@@ -367,7 +367,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   overlay.appendChild(frame)
 
   const legend = document.createElement('div')
-  legend.className = 'pt-3 text-center text-[11px] uppercase tracking-[0.2em] text-slate-500'
+  legend.className =
+    'fighter-legend pt-3 text-center text-[11px] uppercase tracking-[0.2em] text-slate-500'
   legend.textContent =
     'P1 WASD move · 1 light · 2 heavy · 3 special · 4 block   ·   P2 arrows · J light · K heavy · L special · ; block'
   overlay.appendChild(legend)

@@ -69,10 +69,10 @@ export function mountTouchControls(actions: InputActions): void {
   root.id = 'touch-controls'
   root.className = 'pointer-events-none fixed inset-0 z-[55] hidden touch-none select-none'
   root.innerHTML = `
-    <div id="touch-stick" style="bottom: max(1.5rem, env(safe-area-inset-bottom))" class="pointer-events-auto absolute left-6 h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
+    <div id="touch-stick" style="bottom: calc(env(safe-area-inset-bottom) + 6rem)" class="pointer-events-auto absolute left-6 h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
       <div id="touch-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/50 ring-2 ring-emerald-200/70"></div>
     </div>
-    <div style="bottom: max(1.5rem, env(safe-area-inset-bottom))" class="absolute right-6 flex items-end gap-3">
+    <div style="bottom: calc(env(safe-area-inset-bottom) + 6rem)" class="absolute right-6 flex items-end gap-3">
       <div class="flex flex-col gap-3">
         ${button('touch-swap', '⇄', 'h-14 w-14', 'text-xl')}
         ${button('touch-reload', '⟳', 'h-14 w-14', 'text-xl')}

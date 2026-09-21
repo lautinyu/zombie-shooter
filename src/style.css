@@ -77,3 +77,22 @@ textarea {
 .touch-pad.is-forced {
   display: block;
 }
+
+/* Tablets round off their bottom edge and reserve it for system gestures, so
+   the pad keeps a thumb's worth of clearance below the buttons. */
+.touch-pad.is-active,
+.touch-pad.is-forced {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 5rem);
+}
+
+@media (pointer: coarse) and (hover: none) {
+  /* Keyboard hints are dead weight on a tablet and push the pad off screen. */
+  .fighter-legend {
+    display: none;
+  }
+
+  .fighter-overlay {
+    justify-content: flex-start;
+    padding-top: 0.75rem;
+  }
+}

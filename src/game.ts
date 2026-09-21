@@ -377,6 +377,13 @@ interface Boss {
   speedMult: number
   /** Runner Alpha: seconds until the next pack-summoning scream. */
   screamTimer: number
+  /** Seconds the body has failed to make progress, used to unwedge it. */
+  stuckTimer: number
+  /** Position at the last stuck check. */
+  lastX: number
+  lastY: number
+  /** Sidestep direction while shouldering past geometry: 1 or -1. */
+  slide: 1 | -1
   /** Camo Stalker: seconds left of the current visible/invisible stretch. */
   cloakTimer: number
   cloaked: boolean
@@ -1537,6 +1544,10 @@ export class Game {
       dashTimer: kind === 'runner-alpha' ? ALPHA_LEAP_INTERVAL : BOSS_DASH_INTERVAL,
       dashing: 0,
       dashDir: { x: 1, y: 0 },
+      stuckTimer: 0,
+      lastX: spot.x,
+      lastY: spot.y,
+      slide: 1,
       hurt: 0,
       attackCooldown: 0,
       regenerated: false,
@@ -1565,6 +1576,30 @@ export class Game {
         if (d < min || d > max) continue
       }
       return { x, y }
+    }
+    // No point satisfied the distance band, so drop the band before the
+    // clearance: a body dropped inside geometry can never walk out of it.
+    for (let i = 0; i < 400; i++) {
+      const x = 60 + Math.random() * (m.width - 120)
+      const y = 60 + Math.random() * (m.height - 120)
+      if (!circleHitsWall(m, x, y, radius)) return { x, y }
+    }
+    // Last resort: sweep the map for the clear cell nearest the anchor,
+    // shrinking the clearance until something fits.
+    for (const r of [radius, radius * 0.75, radius * 0.5]) {
+      let best: { x: number; y: number } | null = null
+      let bestD = Infinity
+      for (let x = 50; x < m.width - 50; x += 40) {
+        for (let y = 50; y < m.height - 50; y += 40) {
+          if (circleHitsWall(m, x, y, r)) continue
+          const d = anchor ? Math.hypot(x - anchor.x, y - anchor.y) : 0
+          if (d < bestD) {
+            bestD = d
+            best = { x, y }
+          }
+        }
+      }
+      if (best) return best
     }
     return { x: m.width / 2, y: m.height / 2 }
   }
@@ -3074,8 +3109,9 @@ export class Game {
       this.moveCircle(b, b.dashDir.x * BOSS_DASH_SPEED * dt, b.dashDir.y * BOSS_DASH_SPEED * dt)
     } else if (prey) {
       const speed = b.baseSpeed * (b.phase === 2 ? BOSS_ENRAGE_SPEED : 1)
-      this.moveCircle(b, Math.cos(b.angle) * speed * dt, Math.sin(b.angle) * speed * dt)
+      this.walkBoss(b, b.angle, speed, dt)
     }
+    this.unstickBoss(b, dt, prey)
 
     b.ringTimer -= dt
     if (b.ringTimer <= 0) {
@@ -3116,6 +3152,72 @@ export class Game {
         b.attackCooldown = 1
       }
     }
+  }
+
+  /**
+   * Walks a boss along `angle`, shouldering round anything in the way: if the
+   * straight line is blocked it tries progressively wider sidesteps so a wide
+   * body never grinds to a halt against a wreck or an arena corner.
+   */
+  private walkBoss(b: Boss, angle: number, speed: number, dt: number) {
+    const step = speed * dt
+    const before = { x: b.x, y: b.y }
+    this.moveCircle(b, Math.cos(angle) * step, Math.sin(angle) * step)
+    if (Math.hypot(b.x - before.x, b.y - before.y) > step * 0.4) return
+    for (const offset of [0.5, 1, 1.6, 2.4]) {
+      const a = angle + offset * b.slide
+      const probe = { x: before.x, y: before.y, r: b.r }
+      this.moveCircle(probe, Math.cos(a) * step, Math.sin(a) * step)
+      if (Math.hypot(probe.x - before.x, probe.y - before.y) > step * 0.4) {
+        b.x = probe.x
+        b.y = probe.y
+        return
+      }
+    }
+    // Both shoulders blocked: flip the preferred side for the next attempt.
+    b.slide = b.slide === 1 ? -1 : 1
+  }
+
+  /**
+   * Safety net for wide bosses: if one has not moved for a couple of seconds
+   * while it still has a target, it is wedged in geometry, so lift it to the
+   * nearest clear ground between it and its prey rather than stalling the
+   * whole fight.
+   */
+  private unstickBoss(b: Boss, dt: number, prey: Player | null) {
+    if (!prey || b.dashing > 0) {
+      b.stuckTimer = 0
+      b.lastX = b.x
+      b.lastY = b.y
+      return
+    }
+    const moved = Math.hypot(b.x - b.lastX, b.y - b.lastY)
+    b.lastX = b.x
+    b.lastY = b.y
+    if (moved > 0.4) {
+      b.stuckTimer = 0
+      return
+    }
+    // Already touching its prey: standing still there is an attack, not a bug.
+    if (Math.hypot(prey.x - b.x, prey.y - b.y) < b.r + prey.r + 12) {
+      b.stuckTimer = 0
+      return
+    }
+    b.stuckTimer += dt
+    if (b.stuckTimer < 2) return
+    b.stuckTimer = 0
+    const toPrey = Math.atan2(prey.y - b.y, prey.x - b.x)
+    for (const dist of [b.r * 2, b.r * 3, b.r * 4]) {
+      const x = clamp(b.x + Math.cos(toPrey) * dist, b.r, this.map.width - b.r)
+      const y = clamp(b.y + Math.sin(toPrey) * dist, b.r, this.map.height - b.r)
+      if (circleHitsWall(this.map, x, y, b.r)) continue
+      b.x = x
+      b.y = y
+      return
+    }
+    const spot = this.openSpot(b.r + 8, prey, b.r * 2, 420)
+    b.x = spot.x
+    b.y = spot.y
   }
 
   /**
@@ -3808,7 +3910,9 @@ export class Game {
         this.arenaDrops = due
         this.openArenaChoice(due, Math.floor(total / ARENA_DROP_INTERVAL))
       }
-      if (this.arenaTimer >= total) this.startColossus()
+      // The eighth draft lands exactly on the eight-minute mark, so the
+      // Colossus waits for it to be picked before it walks out of the salt.
+      if (this.arenaTimer >= total && !this.arenaChoice) this.startColossus()
     }
 
     this.updateAllies(dt)
