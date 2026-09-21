@@ -697,7 +697,7 @@ export const MISSIONS: Mission[] = [
     description:
       'The last stand of the Rustlands. The salt flats have nowhere to hide: eight minutes of open-field swarm, then the thing the convoy has been running from all chapter.',
     objective:
-      'Survive 8 minutes of the swarm, grab a field upgrade every minute, then kill the Rust Colossus.',
+      'Survive 8 minutes of the swarm, draft one of three field upgrades every minute, then kill the Rust Colossus.',
     path: null,
     unlocks: [],
     payout: 2.8,

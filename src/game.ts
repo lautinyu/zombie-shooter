@@ -293,8 +293,16 @@ interface Medkit {
   arm: number
 }
 
-/** The five field upgrades the Crucible drops, one choice per minute. */
-type ArenaPerkId = 'ally' | 'lifesteal' | 'haste' | 'armour' | 'explosive'
+/** The field upgrades the Crucible offers, three at a time every minute. */
+type ArenaPerkId =
+  | 'ally'
+  | 'lifesteal'
+  | 'haste'
+  | 'armour'
+  | 'explosive'
+  | 'crit'
+  | 'barrel'
+  | 'reload'
 
 interface ArenaPerk {
   id: ArenaPerkId
@@ -303,15 +311,14 @@ interface ArenaPerk {
   color: string
 }
 
-/** One of the two upgrades on offer in a drop; taking either clears both. */
-interface Powerup {
-  x: number
-  y: number
-  r: number
-  perk: ArenaPerk
-  /** Drop wave the pair belongs to, so the twin despawns with it. */
+/** The three-way upgrade draft that halts the Crucible every minute. */
+interface ArenaChoice {
   wave: number
-  pulse: number
+  total: number
+  options: ArenaPerk[]
+  /** Card rectangles in screen space, refreshed every frame for clicks. */
+  cards: { x: number; y: number; w: number; h: number }[]
+  hover: number
 }
 
 /** An automated companion gun that answers to nobody and shoots forever. */
@@ -821,8 +828,8 @@ const ALLY_FOLLOW_DISTANCE = 70
 const ALLY_SPEED = 210
 /** Baseline zombie health, used to size the drone's chip damage on a boss. */
 const ARENA_ZOMBIE_HP = 60
-/** Each lifesteal stack returns 0.2% of the damage dealt as health. */
-const ARENA_LIFESTEAL = 0.002
+/** Each lifesteal stack returns 2.5% of the damage dealt as health. */
+const ARENA_LIFESTEAL = 0.025
 /** Each armour stack soaks 15% of every hit taken. */
 const ARENA_ARMOUR = 0.15
 /** Each explosive stack splashes 10% of the hit onto everything nearby. */
@@ -830,6 +837,15 @@ const ARENA_SPLASH = 0.1
 const ARENA_SPLASH_RADIUS = 90
 /** Each haste stack adds 15% movement speed and 15% rate of fire. */
 const ARENA_HASTE = 0.15
+/** Each crit stack adds 15% chance for a hit to land 50% harder. */
+const ARENA_CRIT_CHANCE = 0.15
+const ARENA_CRIT_BONUS = 0.5
+/** Heavy Barrel: +20% bullet damage and knockback for -5% rate of fire. */
+const ARENA_BARREL_DAMAGE = 0.2
+const ARENA_BARREL_FIRE_COST = 0.05
+const ARENA_BARREL_KNOCKBACK = 22
+/** Each reload stack cuts a quarter off the time spent swapping mags. */
+const ARENA_RELOAD = 0.25
 
 const ARENA_PERKS: ArenaPerk[] = [
   {
@@ -841,7 +857,7 @@ const ARENA_PERKS: ArenaPerk[] = [
   {
     id: 'lifesteal',
     name: 'Leech Coupling',
-    blurb: '+0.2% of all damage dealt returned as health',
+    blurb: '+2.5% of all damage dealt returned as health',
     color: '#f87171',
   },
   {
@@ -862,7 +878,56 @@ const ARENA_PERKS: ArenaPerk[] = [
     blurb: 'Hits splash 10% damage onto nearby infected',
     color: '#fb923c',
   },
+  {
+    id: 'crit',
+    name: 'Critical Impact',
+    blurb: '+15% critical chance, criticals hit 50% harder',
+    color: '#e879f9',
+  },
+  {
+    id: 'barrel',
+    name: 'Heavy Barrel',
+    blurb: '+20% bullet damage and knockback, -5% fire rate',
+    color: '#a3e635',
+  },
+  {
+    id: 'reload',
+    name: 'Rapid Reload',
+    blurb: 'Reloads finish 25% faster',
+    color: '#22d3ee',
+  },
 ]
+
+/** Greedily breaks a blurb into lines that fit the given pixel width. */
+function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
+  const lines: string[] = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    const next = line ? `${line} ${word}` : word
+    if (line && ctx.measureText(next).width > maxWidth) {
+      lines.push(line)
+      line = word
+    } else {
+      line = next
+    }
+  }
+  if (line) lines.push(line)
+  return lines
+}
+
+/** A fresh, empty upgrade tally for a Crucible run. */
+function emptyArenaPerks(): Record<ArenaPerkId, number> {
+  return {
+    ally: 0,
+    lifesteal: 0,
+    haste: 0,
+    armour: 0,
+    explosive: 0,
+    crit: 0,
+    barrel: 0,
+    reload: 0,
+  }
+}
 
 /** The Colossus: a wall of scrap that closes fast and hits for 25. */
 const COLOSSUS_MAX_HP = 26000
@@ -973,14 +1038,9 @@ export class Game {
   /** Seconds survived in the Crucible, counting up to the boss drop. */
   private arenaTimer = 0
   /** Field upgrades taken this run, by id; every one of them stacks. */
-  private arenaPerks: Record<ArenaPerkId, number> = {
-    ally: 0,
-    lifesteal: 0,
-    haste: 0,
-    armour: 0,
-    explosive: 0,
-  }
-  private powerups: Powerup[] = []
+  private arenaPerks: Record<ArenaPerkId, number> = emptyArenaPerks()
+  /** Set while the minute draft is on screen; the world holds still for it. */
+  private arenaChoice: ArenaChoice | null = null
   private allies: Ally[] = []
   /** Number of minute drops already offered. */
   private arenaDrops = 0
@@ -1145,7 +1205,43 @@ export class Game {
       walkTo: (x, y) => {
         this.walkTarget = { x: x / this.zoom + this.camera.x, y: y / this.zoom + this.camera.y }
       },
-      canShoot: () => this.state === 'playing' && Boolean(this.p1),
+      canShoot: () => this.state === 'playing' && !this.arenaChoice && Boolean(this.p1),
+    })
+    this.bindArenaChoiceInput()
+  }
+
+  /** 1/2/3 or a tap on a card locks in the Crucible's minute draft. */
+  private bindArenaChoiceInput() {
+    window.addEventListener('keydown', (e) => {
+      if (!this.arenaChoice) return
+      const index = ['1', '2', '3'].indexOf(e.key)
+      if (index < 0) return
+      e.preventDefault()
+      this.pickArenaChoice(index)
+    })
+    const at = (e: PointerEvent) => {
+      const rect = this.canvas.getBoundingClientRect()
+      return { x: e.clientX - rect.left, y: e.clientY - rect.top }
+    }
+    this.canvas.addEventListener('pointermove', (e) => {
+      const choice = this.arenaChoice
+      if (!choice) return
+      const p = at(e)
+      choice.hover = choice.cards.findIndex(
+        (c) => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h
+      )
+    })
+    this.canvas.addEventListener('pointerdown', (e) => {
+      const choice = this.arenaChoice
+      if (!choice) return
+      const p = at(e)
+      const index = choice.cards.findIndex(
+        (c) => p.x >= c.x && p.x <= c.x + c.w && p.y >= c.y && p.y <= c.y + c.h
+      )
+      if (index < 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      this.pickArenaChoice(index)
     })
   }
 
@@ -1222,8 +1318,8 @@ export class Game {
     this.arenaTimer = 0
     this.arenaDrops = 0
     this.arenaBossSpawned = false
-    this.arenaPerks = { ally: 0, lifesteal: 0, haste: 0, armour: 0, explosive: 0 }
-    this.powerups = []
+    this.arenaPerks = emptyArenaPerks()
+    this.arenaChoice = null
     this.allies = []
     this.mutation = null
     this.mutationTimer = MUTATION_INTERVAL
@@ -1498,7 +1594,7 @@ export class Game {
     if (!this.running) return
     const dt = Math.min((now - this.last) / 1000, 0.05)
     this.last = now
-    if (this.state === 'playing' && !this.paused) this.update(dt)
+    if (this.state === 'playing' && !this.paused && !this.arenaChoice) this.update(dt)
     this.render()
     this.emitHud()
     requestAnimationFrame(this.loop)
@@ -2567,7 +2663,7 @@ export class Game {
   private startReload(p: Player | undefined) {
     if (this.state !== 'playing' || !p || p.down || p.weapon.infiniteAmmo) return
     if (p.reloadTimer > 0 || p.mag === p.weapon.magSize || p.reserve <= 0) return
-    p.reloadTimer = p.weapon.reloadTime * p.character.reloadMultiplier
+    p.reloadTimer = p.weapon.reloadTime * p.character.reloadMultiplier * this.arenaReloadScale
   }
 
   private updateWeapon(p: Player, dt: number) {
@@ -2620,7 +2716,8 @@ export class Game {
   /** Rail convoy weapons cycle 1.5x faster, for the arcade cadence. */
   private fireInterval(p: Player): number {
     const base = this.railMode ? p.weapon.fireInterval / RAIL_FIRE_RATE : p.weapon.fireInterval
-    return base / this.arenaHaste
+    const barrel = 1 + ARENA_BARREL_FIRE_COST * this.arenaPerks.barrel
+    return (base * barrel) / this.arenaHaste
   }
 
   private fire(p: Player) {
@@ -2633,7 +2730,8 @@ export class Game {
     const acidShot = w.perk === 'acidic-spray' && p.shotsFired % ACID_SHOT_INTERVAL === 0
     const cryoShot = Boolean(w.cryoEvery) && p.shotsFired % (w.cryoEvery ?? 1) === 0
     const overdrive = p.character.id === 'army-retiree' && p.abilityActive > 0
-    const damage = w.damage * (overdrive ? OVERDRIVE_DAMAGE : 1)
+    const damage =
+      w.damage * (overdrive ? OVERDRIVE_DAMAGE : 1) * this.arenaDamageScale * this.arenaCritRoll()
 
     for (let i = 0; i < w.pellets; i++) {
       const spread = (Math.random() - 0.5) * w.spread * (w.pellets > 1 ? 2 : 1)
@@ -3677,36 +3775,6 @@ export class Game {
    * dropped every minute, then the Colossus walks in and the clock stops
    * mattering. Every upgrade taken carries straight into the boss fight.
    */
-  /** A field upgrade crate: a pulsing ring in the perk's own colour. */
-  private drawPowerup(pu: Powerup) {
-    const ctx = this.ctx
-    const beat = 1 + Math.sin(pu.pulse * 4) * 0.12
-    ctx.save()
-    ctx.translate(pu.x, pu.y)
-    ctx.globalAlpha = 0.28
-    ctx.fillStyle = pu.perk.color
-    ctx.beginPath()
-    ctx.arc(0, 0, pu.r * 2.1 * beat, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.globalAlpha = 1
-    ctx.fillStyle = '#0f172a'
-    ctx.strokeStyle = pu.perk.color
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.rect(-pu.r, -pu.r, pu.r * 2, pu.r * 2)
-    ctx.fill()
-    ctx.stroke()
-    ctx.fillStyle = pu.perk.color
-    ctx.font = 'bold 15px system-ui, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(pu.perk.name.slice(0, 1), 0, 1)
-    ctx.font = 'bold 11px system-ui, sans-serif'
-    ctx.fillStyle = '#e2e8f0'
-    ctx.fillText(pu.perk.name.toUpperCase(), 0, -pu.r - 10)
-    ctx.restore()
-  }
-
   /** A support drone: a squat turret body with a barrel and a muzzle kick. */
   private drawAlly(a: Ally) {
     const ctx = this.ctx
@@ -3740,26 +3808,34 @@ export class Game {
       const due = Math.min(Math.floor(this.arenaTimer / ARENA_DROP_INTERVAL), Math.floor(total / ARENA_DROP_INTERVAL))
       if (due > this.arenaDrops) {
         this.arenaDrops = due
-        this.dropArenaChoice(due)
+        this.openArenaChoice(due, Math.floor(total / ARENA_DROP_INTERVAL))
       }
       if (this.arenaTimer >= total) this.startColossus()
     }
 
-    for (const pu of this.powerups) pu.pulse += dt
     this.updateAllies(dt)
   }
 
-  /** Lays two upgrades in front of the players; taking one clears the pair. */
-  private dropArenaChoice(wave: number) {
-    const pool = [...ARENA_PERKS].sort(() => Math.random() - 0.5).slice(0, 2)
-    const anchor = this.p1 ?? { x: this.map.width / 2, y: this.map.height / 2 }
-    for (const perk of pool) {
-      const spot = this.openSpot(18, anchor, 120, 260)
-      this.powerups.push({ x: spot.x, y: spot.y, r: 18, perk, wave, pulse: 0 })
-    }
-    this.banner = `Field upgrade dropped — minute ${wave}/8`
-    this.bannerTimer = 3
+  /**
+   * Halts the Crucible and offers three random upgrades; the world stays
+   * frozen until one is picked with 1/2/3 or a click.
+   */
+  private openArenaChoice(wave: number, total: number) {
+    const options = [...ARENA_PERKS].sort(() => Math.random() - 0.5).slice(0, 3)
+    this.arenaChoice = { wave, total, options, cards: [], hover: -1 }
+    clearInput()
     playSfx('medkit')
+  }
+
+  /** Locks in one of the drafted upgrades and releases the freeze. */
+  private pickArenaChoice(index: number) {
+    const choice = this.arenaChoice
+    if (!choice) return
+    const perk = choice.options[index]
+    if (!perk) return
+    this.arenaChoice = null
+    clearInput()
+    this.takeArenaPerk(perk, this.alivePlayers[0] ?? this.p1)
   }
 
   /** Ends the survival phase: the field is swept and the Colossus lands. */
@@ -3769,7 +3845,7 @@ export class Game {
     // The swarm is wiped so the finale is a clean duel, not a pile-on.
     this.enemies = []
     this.venom = []
-    this.powerups = []
+    this.arenaChoice = null
     this.boss = this.makeBoss(this.mission?.boss ?? 'rust-colossus')
     this.banner = 'THE RUST COLOSSUS'
     this.bannerTimer = 4
@@ -3833,9 +3909,9 @@ export class Game {
   }
 
   /** Adds a taken upgrade to the run; drones spawn beside their owner. */
-  private takeArenaPerk(perk: ArenaPerk, taker: Player) {
+  private takeArenaPerk(perk: ArenaPerk, taker: Player | undefined) {
     this.arenaPerks[perk.id] += 1
-    if (perk.id === 'ally') {
+    if (perk.id === 'ally' && taker) {
       const spot = this.openSpot(14, taker, 40, 90)
       this.allies.push({ x: spot.x, y: spot.y, r: 13, angle: 0, cooldown: 0, recoil: 0 })
     }
@@ -3847,6 +3923,24 @@ export class Game {
   /** Multiplier on movement speed and rate of fire from Kinetic Servos. */
   private get arenaHaste(): number {
     return 1 + ARENA_HASTE * this.arenaPerks.haste
+  }
+
+  /** Flat bullet damage multiplier from Heavy Barrel stacks. */
+  private get arenaDamageScale(): number {
+    return 1 + ARENA_BARREL_DAMAGE * this.arenaPerks.barrel
+  }
+
+  /** Reload times shrink 25% per Rapid Reload stack, down to a third. */
+  private get arenaReloadScale(): number {
+    return Math.max(0.33, 1 - ARENA_RELOAD * this.arenaPerks.reload)
+  }
+
+  /** Rolls Critical Impact once per round fired. */
+  private arenaCritRoll(): number {
+    const stacks = this.arenaPerks.crit
+    if (stacks <= 0) return 1
+    const chance = Math.min(1, ARENA_CRIT_CHANCE * stacks)
+    return Math.random() < chance ? 1 + ARENA_CRIT_BONUS : 1
   }
 
   /**
@@ -3868,6 +3962,13 @@ export class Game {
     if (leech > 0 && b.owner && !b.owner.down) {
       b.owner.hp = Math.min(b.owner.maxHp, b.owner.hp + dealt * ARENA_LIFESTEAL * leech)
     }
+    // Heavy Barrel rounds shove whatever they hit back along their flight.
+    const knock = this.arenaPerks.barrel
+    if (knock > 0 && victim) {
+      const speed = Math.hypot(b.vx, b.vy) || 1
+      const push = ARENA_BARREL_KNOCKBACK * knock
+      this.moveCircle(victim, (b.vx / speed) * push, (b.vy / speed) * push)
+    }
     const stacks = this.arenaPerks.explosive
     if (stacks <= 0) return
     const splash = dealt * ARENA_SPLASH * stacks
@@ -3885,18 +3986,6 @@ export class Game {
   }
 
   private updatePickups(dt: number) {
-    for (let i = this.powerups.length - 1; i >= 0; i--) {
-      const pu = this.powerups[i]
-      const taker = this.alivePlayers.find(
-        (p) => Math.hypot(pu.x - p.x, pu.y - p.y) < p.r + pu.r
-      )
-      if (!taker) continue
-      this.takeArenaPerk(pu.perk, taker)
-      // Only one upgrade per minute: the twin on offer disappears with it.
-      this.powerups = this.powerups.filter((o) => o.wave !== pu.wave)
-      break
-    }
-
     for (let i = this.ammoBoxes.length - 1; i >= 0; i--) {
       const a = this.ammoBoxes[i]
       const taker = this.alivePlayers.find((p) => Math.hypot(a.x - p.x, a.y - p.y) < p.r + 14)
@@ -4220,7 +4309,6 @@ export class Game {
     }
 
     for (const kit of this.medkits) this.drawMedkit(kit)
-    for (const pu of this.powerups) this.drawPowerup(pu)
     for (const a of this.allies) this.drawAlly(a)
     for (const b of this.barricades) this.drawBarricade(b)
 
@@ -4279,6 +4367,82 @@ export class Game {
     this.drawCrosshair()
     this.drawMinimap()
     this.drawBanner()
+    this.drawArenaChoice()
+  }
+
+  /**
+   * The minute draft: three upgrade cards over a dimmed field. Card rects are
+   * stored as they are laid out so a click can be matched against them.
+   */
+  private drawArenaChoice() {
+    const choice = this.arenaChoice
+    if (!choice) return
+    const ctx = this.ctx
+    const w = this.viewW
+    const h = this.viewH
+    ctx.save()
+    ctx.fillStyle = 'rgba(2,6,12,0.82)'
+    ctx.fillRect(0, 0, w, h)
+
+    ctx.textAlign = 'center'
+    ctx.fillStyle = '#e2e8f0'
+    ctx.font = 'bold 30px system-ui, sans-serif'
+    ctx.fillText('FIELD UPGRADE', w / 2, h / 2 - 170)
+    ctx.font = '15px system-ui, sans-serif'
+    ctx.fillStyle = '#94a3b8'
+    ctx.fillText(
+      `Minute ${choice.wave} of ${choice.total} — pick one with 1, 2, 3 or a click`,
+      w / 2,
+      h / 2 - 142
+    )
+
+    const cardW = Math.min(250, (w - 80) / 3)
+    const cardH = 210
+    const gap = Math.min(24, (w - cardW * 3 - 32) / 2)
+    const left = w / 2 - (cardW * 3 + gap * 2) / 2
+    const top = h / 2 - cardH / 2 + 10
+    choice.cards = []
+
+    choice.options.forEach((perk, i) => {
+      const x = left + i * (cardW + gap)
+      choice.cards.push({ x, y: top, w: cardW, h: cardH })
+      const hot = choice.hover === i
+      ctx.fillStyle = hot ? '#111f33' : '#0b1220'
+      ctx.strokeStyle = perk.color
+      ctx.lineWidth = hot ? 4 : 2
+      ctx.beginPath()
+      ctx.roundRect(x, top, cardW, cardH, 12)
+      ctx.fill()
+      ctx.stroke()
+
+      ctx.fillStyle = perk.color
+      ctx.globalAlpha = 0.18
+      ctx.beginPath()
+      ctx.arc(x + cardW / 2, top + 58, 30, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.globalAlpha = 1
+      ctx.font = 'bold 30px system-ui, sans-serif'
+      ctx.fillText(perk.name.slice(0, 1), x + cardW / 2, top + 69)
+
+      ctx.fillStyle = '#f8fafc'
+      ctx.font = 'bold 16px system-ui, sans-serif'
+      ctx.fillText(perk.name.toUpperCase(), x + cardW / 2, top + 116)
+
+      ctx.fillStyle = '#cbd5f5'
+      ctx.font = '13px system-ui, sans-serif'
+      for (const [line, text] of wrapText(ctx, perk.blurb, cardW - 28).entries()) {
+        ctx.fillText(text, x + cardW / 2, top + 142 + line * 18)
+      }
+
+      const owned = this.arenaPerks[perk.id]
+      ctx.fillStyle = owned > 0 ? perk.color : '#475569'
+      ctx.font = 'bold 12px system-ui, sans-serif'
+      ctx.fillText(owned > 0 ? `OWNED ×${owned}` : 'NEW', x + cardW / 2, top + cardH - 34)
+      ctx.fillStyle = perk.color
+      ctx.font = 'bold 15px system-ui, sans-serif'
+      ctx.fillText(`[${i + 1}]`, x + cardW / 2, top + cardH - 14)
+    })
+    ctx.restore()
   }
 
   /**
