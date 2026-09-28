@@ -52,7 +52,7 @@ type ActionId =
   | 'ability'
 
 /** Active class ability, one per playable fighter, on its own cooldown. */
-type AbilityId = 'shadow-dash' | 'riot-shield' | 'zombie-camo'
+type AbilityId = 'shadow-dash' | 'riot-shield' | 'zombie-camo' | 'phase-shift'
 
 interface AbilityData {
   name: string
@@ -86,7 +86,19 @@ const ABILITIES: Record<AbilityId, AbilityData> = {
     duration: 4,
     color: '#4ade80',
   },
+  'phase-shift': {
+    name: 'Phase Shift',
+    tag: 'PHASE SHIFT',
+    cooldown: 11,
+    duration: 2,
+    color: '#c4b5fd',
+  },
 }
+
+/** Attacks that keep the Phase Shift afterglow once the 2s window closes. */
+const PHASE_ECHO_HITS = 2
+/** Dodge chance added on top of the base rate during the afterglow. */
+const PHASE_ECHO_DODGE = 0.3
 
 /** Speed the Reaper crosses the pit at during Shadow Dash, in px/s. */
 const DASH_SPEED = 780
@@ -257,7 +269,7 @@ const ROSTER: Character[] = [
     hpScale: 1,
     dodge: 0.15,
     trait: '15% CHANCE TO EVADE A HIT',
-    ability: null,
+    ability: 'phase-shift',
   },
 ]
 
@@ -388,6 +400,10 @@ interface Fighter {
   abilityTimer: number
   /** Counts down to the next fire patch while Shadow Dash is running. */
   flameTimer: number
+  /** Incoming attacks still carrying the Phase Shift dodge bonus. */
+  phaseEcho: number
+  /** Fading ghost afterimages left by Phase Shift. */
+  echoes: { x: number; life: number }[]
   hitFlash: number
   /** Damage dealt this match, the basis of the arcade score. */
   dealt: number
@@ -514,6 +530,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     abilityCd: 0,
     abilityTimer: 0,
     flameTimer: 0,
+    phaseEcho: 0,
+    echoes: [],
     hitFlash: 0,
     dealt: 0,
   })
@@ -527,6 +545,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     f.ability === 'riot-shield' && f.abilityTimer > 0
   const camouflaged = (f: Fighter): boolean =>
     f.ability === 'zombie-camo' && f.abilityTimer > 0
+  const phased = (f: Fighter): boolean =>
+    f.ability === 'phase-shift' && f.abilityTimer > 0
 
   /** Roster index each player has highlighted on the select screen. */
   let picks: [number, number] = [0, 1]
@@ -617,6 +637,12 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       f.flameTimer = 0
       playSfx('boss-dash')
     } else {
+      // Phase Shift banks its afterglow up front: the guaranteed window runs
+      // first, then the next couple of attacks are still hard to land.
+      if (f.ability === 'phase-shift') {
+        f.phaseEcho = PHASE_ECHO_HITS
+        f.echoes = []
+      }
       playSfx(f.ability === 'riot-shield' ? 'barricade' : 'cloak')
     }
   }
@@ -670,8 +696,16 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       playSfx('barricade')
       return
     }
-    // Evasion resolves before the guard: the blow simply misses.
-    if (defender.dodge > 0 && Math.random() < defender.dodge) {
+    // Evasion resolves before the guard: the blow simply misses. Phase Shift
+    // makes that certain while it is up, and its afterglow tops up the next
+    // couple of attacks.
+    const guaranteed = phased(defender)
+    let chance = defender.dodge
+    if (!guaranteed && defender.phaseEcho > 0) {
+      chance += PHASE_ECHO_DODGE
+      defender.phaseEcho -= 1
+    }
+    if (guaranteed || (chance > 0 && Math.random() < chance)) {
       defender.evadeFlash = 0.6
       playSfx('swap')
       return
@@ -707,6 +741,14 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     f.abilityCd = Math.max(0, f.abilityCd - dt)
     f.abilityTimer = Math.max(0, f.abilityTimer - dt)
     f.stun = Math.max(0, f.stun - dt)
+
+    // Phase Shift leaves afterimages behind the fighter while it is up.
+    for (let i = f.echoes.length - 1; i >= 0; i--) {
+      f.echoes[i].life -= dt
+      if (f.echoes[i].life <= 0) f.echoes.splice(i, 1)
+    }
+    if (phased(f) && (f.echoes.length === 0 || Math.abs(f.echoes[0].x - f.x) > 14))
+      f.echoes.unshift({ x: f.x, life: 0.45 })
 
     if (dashing(f)) {
       // Shadow Dash: a straight sprint that passes through the opponent and
@@ -793,6 +835,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       }
       if (fl.spent) continue
       const victim = fl.owner === 1 ? p2 : p1
+      if (phased(victim)) continue
       if (victim.y !== FLOOR || Math.abs(victim.x - fl.x) > FIGHTER_W / 2 + 8) continue
       fl.spent = true
       victim.hp = Math.max(0, victim.hp - FLAME_DAMAGE)
@@ -1024,8 +1067,9 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     ctx.save()
     ctx.translate(f.x, f.y)
     ctx.scale(f.facing * scale, scale)
-    // Camouflage fades the fighter into the pit; the dash smears it.
+    // Camouflage fades the fighter into the pit; the dash and phase smear it.
     if (camouflaged(f)) ctx.globalAlpha = 0.35
+    else if (phased(f)) ctx.globalAlpha = 0.5
     else if (dashing(f)) ctx.globalAlpha = 0.75
     if (f.hitFlash > 0) {
       ctx.shadowColor = '#fca5a5'
@@ -1177,9 +1221,11 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       const state =
         f.abilityTimer > 0
           ? `ACTIVE ${f.abilityTimer.toFixed(1)}s`
-          : f.abilityCd > 0
-            ? `${f.abilityCd.toFixed(1)}s`
-            : 'READY'
+          : f.phaseEcho > 0
+            ? `ECHO x${f.phaseEcho} · ${f.abilityCd.toFixed(1)}s`
+            : f.abilityCd > 0
+              ? `${f.abilityCd.toFixed(1)}s`
+              : 'READY'
       ctx.fillText(
         `${ab.tag} [${f.id === 1 ? 'E' : 'NUM1/U'}] ${state}`,
         flip ? left + barW : left,
@@ -1362,18 +1408,33 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       ctx.restore()
     }
 
+    // Phase Shift afterimages, drawn under the fighters that cast them.
+    for (const f of [p1, p2]) {
+      for (const echo of f.echoes) {
+        ctx.save()
+        ctx.globalAlpha = echo.life * 0.5
+        ctx.fillStyle = ABILITIES['phase-shift'].color
+        ctx.shadowColor = ABILITIES['phase-shift'].color
+        ctx.shadowBlur = 18
+        ctx.fillRect(echo.x - FIGHTER_W / 2, FLOOR - FIGHTER_H, FIGHTER_W, FIGHTER_H)
+        ctx.restore()
+      }
+    }
+
     drawFighter(p1)
     drawFighter(p2)
 
     // Evade callout, so the 7% dodge is visible when it fires.
     for (const f of [p1, p2]) {
       if (f.evadeFlash <= 0) continue
+      // Phase Shift's guaranteed window reads as a phase, not a lucky dodge.
+      const label = phased(f) ? 'PHASED' : 'EVADE'
       ctx.save()
       ctx.textAlign = 'center'
       ctx.globalAlpha = Math.min(1, f.evadeFlash * 2)
       ctx.font = 'bold 18px ui-monospace, monospace'
       ctx.fillStyle = '#c4b5fd'
-      ctx.fillText('EVADE', f.x, f.y - FIGHTER_H - 24 - (0.6 - f.evadeFlash) * 20)
+      ctx.fillText(label, f.x, f.y - FIGHTER_H - 24 - (0.6 - f.evadeFlash) * 20)
       ctx.restore()
     }
     ctx.restore()
@@ -1394,7 +1455,12 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
         15,
         '#94a3b8',
       )
-      retroText('CLASS ABILITIES: SHADOW DASH · RIOT SHIELD · ZOMBIE CAMO', 418, 14, '#65a30d')
+      retroText(
+        'ABILITIES: SHADOW DASH · RIOT SHIELD · ZOMBIE CAMO · PHASE SHIFT',
+        418,
+        14,
+        '#65a30d',
+      )
       retroText('6 STAGES — SURVIVE TO THE ROT SOVEREIGN', 442, 14, '#f43f5e')
     }
 
