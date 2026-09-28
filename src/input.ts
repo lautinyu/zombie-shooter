@@ -42,7 +42,7 @@ const P1_MOVEMENT: Record<'up' | 'down' | 'left' | 'right', MovementKey> = {
 const SCROLL_CODES = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'space']
 
 /** Extra player 2 triggers kept alongside whatever shoot key is bound. */
-const P2_EXTRA_TRIGGERS = ['numpad0', 'controlright']
+const P2_EXTRA_TRIGGERS = ['numpad0', 'controlright', 'keyj']
 
 /** One-shot key presses; movement is never routed through these. */
 export interface InputActions {

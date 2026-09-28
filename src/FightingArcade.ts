@@ -41,7 +41,70 @@ const INPUT_BUFFER = 0.25
 
 type MoveId = 'light' | 'heavy' | 'special'
 type Phase = 'attract' | 'select' | 'fight' | 'round-over' | 'match-over'
-type ActionId = 'left' | 'right' | 'jump' | 'light' | 'heavy' | 'special' | 'block'
+type ActionId =
+  | 'left'
+  | 'right'
+  | 'jump'
+  | 'light'
+  | 'heavy'
+  | 'special'
+  | 'block'
+  | 'ability'
+
+/** Active class ability, one per playable fighter, on its own cooldown. */
+type AbilityId = 'shadow-dash' | 'riot-shield' | 'zombie-camo'
+
+interface AbilityData {
+  name: string
+  /** Short HUD tag. */
+  tag: string
+  cooldown: number
+  /** Seconds the effect stays up. */
+  duration: number
+  color: string
+}
+
+const ABILITIES: Record<AbilityId, AbilityData> = {
+  'shadow-dash': {
+    name: 'Shadow Dash',
+    tag: 'SHADOW DASH',
+    cooldown: 9,
+    duration: 0.36,
+    color: '#fb7185',
+  },
+  'riot-shield': {
+    name: 'Riot Shield',
+    tag: 'RIOT SHIELD',
+    cooldown: 12,
+    duration: 3,
+    color: '#38bdf8',
+  },
+  'zombie-camo': {
+    name: 'Zombie Camouflage',
+    tag: 'ZOMBIE CAMO',
+    cooldown: 13,
+    duration: 4,
+    color: '#4ade80',
+  },
+}
+
+/** Speed the Reaper crosses the pit at during Shadow Dash, in px/s. */
+const DASH_SPEED = 780
+/** Fire left in the dash's wake: damage per patch and how long it burns. */
+const FLAME_DAMAGE = 9
+const FLAME_LIFE = 2.2
+const FLAME_SPACING = 0.05
+/** Share of a blocked blow the Riot Shield throws back at the attacker. */
+const SHIELD_REFLECT = 0.6
+
+/** A patch of fire dropped by Shadow Dash. */
+interface Flame {
+  x: number
+  life: number
+  owner: 1 | 2
+  /** One patch burns a given fighter once. */
+  spent: boolean
+}
 
 interface MoveData {
   /** Seconds before the hitbox exists — the punish window. */
@@ -135,6 +198,8 @@ interface Character {
   dodge: number
   /** One-line passive summary shown on the select screen. */
   trait: string
+  /** Active ability on a cooldown, or null for passive-only fighters. */
+  ability: AbilityId | null
 }
 
 const ROSTER: Character[] = [
@@ -150,6 +215,7 @@ const ROSTER: Character[] = [
     hpScale: 1,
     dodge: 0,
     trait: '+10% DAMAGE ON EVERY ATTACK',
+    ability: 'riot-shield',
   },
   {
     name: 'Reaper',
@@ -163,6 +229,7 @@ const ROSTER: Character[] = [
     hpScale: 1,
     dodge: 0,
     trait: '5% LIFESTEAL ON EVERY HIT',
+    ability: 'shadow-dash',
   },
   {
     name: 'Shambler',
@@ -176,6 +243,7 @@ const ROSTER: Character[] = [
     hpScale: 0.95,
     dodge: 0,
     trait: '+10% SPEED & ATTACK SPEED · -5% HP',
+    ability: 'zombie-camo',
   },
   {
     name: 'Ghost',
@@ -189,6 +257,7 @@ const ROSTER: Character[] = [
     hpScale: 1,
     dodge: 0.15,
     trait: '15% CHANCE TO EVADE A HIT',
+    ability: null,
   },
 ]
 
@@ -313,6 +382,12 @@ interface Fighter {
   /** Seconds left of hit or block stun; the fighter cannot act. */
   stun: number
   specialCd: number
+  /** Class ability, its cooldown and the seconds of effect still running. */
+  ability: AbilityId | null
+  abilityCd: number
+  abilityTimer: number
+  /** Counts down to the next fire patch while Shadow Dash is running. */
+  flameTimer: number
   hitFlash: number
   /** Damage dealt this match, the basis of the arcade score. */
   dealt: number
@@ -333,6 +408,7 @@ const KEYS: Record<1 | 2, Record<ActionId, string[]>> = {
     light: ['1'],
     heavy: ['2'],
     special: ['3'],
+    ability: ['e'],
   },
   2: {
     left: ['arrowleft'],
@@ -342,6 +418,9 @@ const KEYS: Record<1 | 2, Record<ActionId, string[]>> = {
     light: ['j'],
     heavy: ['k'],
     special: ['l'],
+    // 'k' is already player 2's heavy, so the ability sits on the numpad with
+    // 'u' as a laptop-friendly stand-in.
+    ability: ['numpad1', 'u'],
   },
 }
 
@@ -370,7 +449,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   legend.className =
     'fighter-legend pt-3 text-center text-[11px] uppercase tracking-[0.2em] text-slate-500'
   legend.textContent =
-    'P1 WASD move · 1 light · 2 heavy · 3 special · 4 block   ·   P2 arrows · J light · K heavy · L special · ; block'
+    'P1 WASD · 1/2/3 attacks · 4 block · E ability   ·   P2 arrows · J/K/L attacks · ; block · Numpad1 or U ability'
   overlay.appendChild(legend)
 
   const pad = buildTouchPad()
@@ -431,9 +510,23 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     blocking: false,
     stun: 0,
     specialCd: 0,
+    ability: from ? null : char.ability,
+    abilityCd: 0,
+    abilityTimer: 0,
+    flameTimer: 0,
     hitFlash: 0,
     dealt: 0,
   })
+
+  /** Fire patches left behind by Shadow Dash, cleared between rounds. */
+  let flames: Flame[] = []
+
+  const dashing = (f: Fighter): boolean =>
+    f.ability === 'shadow-dash' && f.abilityTimer > 0
+  const shielded = (f: Fighter): boolean =>
+    f.ability === 'riot-shield' && f.abilityTimer > 0
+  const camouflaged = (f: Fighter): boolean =>
+    f.ability === 'zombie-camo' && f.abilityTimer > 0
 
   /** Roster index each player has highlighted on the select screen. */
   let picks: [number, number] = [0, 1]
@@ -456,6 +549,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     p2 = makeFighter(2, versus ? null : opponent(), ROSTER[picks[1]])
     p2.facing = facing2
     clock = ROUND_TIME
+    flames = []
     shake = 0
     cpuThink = 0
     cpuPause = 0.8
@@ -507,7 +601,25 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     return true
   }
 
-  const busy = (f: Fighter): boolean => f.move !== null || f.stun > 0
+  const busy = (f: Fighter): boolean =>
+    f.move !== null || f.stun > 0 || dashing(f)
+
+  /** Fires the fighter's class ability if it is off cooldown. */
+  const startAbility = (f: Fighter) => {
+    if (!f.ability || f.abilityCd > 0 || f.abilityTimer > 0 || busy(f)) return
+    const data = ABILITIES[f.ability]
+    f.abilityCd = data.cooldown
+    f.abilityTimer = data.duration
+    f.blocking = false
+    f.move = null
+    f.moveTimer = 0
+    if (f.ability === 'shadow-dash') {
+      f.flameTimer = 0
+      playSfx('boss-dash')
+    } else {
+      playSfx(f.ability === 'riot-shield' ? 'barricade' : 'cloak')
+    }
+  }
 
   const startMove = (f: Fighter, id: MoveId) => {
     if (busy(f)) return
@@ -545,6 +657,19 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     if (airGap > data.height) return
 
     attacker.moveHit = true
+    // The Riot Shield eats the blow outright and throws part of it back.
+    if (shielded(defender) && defender.facing !== attacker.facing) {
+      const back = data.damage * SHIELD_REFLECT * defender.power
+      attacker.hp = Math.max(0, attacker.hp - back)
+      defender.dealt += back
+      attacker.stun = data.hitstun
+      attacker.move = null
+      attacker.hitFlash = 0.2
+      attacker.vx = -attacker.facing * data.knockback * 0.8
+      shake = Math.max(shake, 0.2)
+      playSfx('barricade')
+      return
+    }
     // Evasion resolves before the guard: the blow simply misses.
     if (defender.dodge > 0 && Math.random() < defender.dodge) {
       defender.evadeFlash = 0.6
@@ -579,7 +704,23 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     f.hitFlash = Math.max(0, f.hitFlash - dt)
     f.evadeFlash = Math.max(0, f.evadeFlash - dt)
     f.specialCd = Math.max(0, f.specialCd - dt)
+    f.abilityCd = Math.max(0, f.abilityCd - dt)
+    f.abilityTimer = Math.max(0, f.abilityTimer - dt)
     f.stun = Math.max(0, f.stun - dt)
+
+    if (dashing(f)) {
+      // Shadow Dash: a straight sprint that passes through the opponent and
+      // scatters fire behind it. Nothing else runs while it is up.
+      f.x += f.facing * DASH_SPEED * dt
+      f.flameTimer -= dt
+      if (f.flameTimer <= 0) {
+        f.flameTimer = FLAME_SPACING
+        flames.push({ x: f.x, life: FLAME_LIFE, owner: f.id, spent: false })
+      }
+      f.x = Math.max(WALL + FIGHTER_W / 2, Math.min(VIEW_W - WALL - FIGHTER_W / 2, f.x))
+      f.walkPhase += Math.abs(f.x - startX) * 0.06
+      return
+    }
 
     if (f.y === FLOOR && f.vy === 0) f.facing = foe.x >= f.x ? 1 : -1
 
@@ -603,6 +744,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       const heavy = buffered(f.id, 'heavy', free)
       const special = buffered(f.id, 'special', free)
       const jump = buffered(f.id, 'jump', free && f.y === FLOOR)
+      if (buffered(f.id, 'ability', free)) startAbility(f)
       if (light) startMove(f, 'light')
       else if (heavy) startMove(f, 'heavy')
       else if (special) startMove(f, 'special')
@@ -640,9 +782,39 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     f.walkPhase += Math.abs(f.x - startX) * 0.06
   }
 
+  /** Burns whoever walks into a fire patch, then ages the patches out. */
+  const stepFlames = (dt: number) => {
+    for (let i = flames.length - 1; i >= 0; i--) {
+      const fl = flames[i]
+      fl.life -= dt
+      if (fl.life <= 0) {
+        flames.splice(i, 1)
+        continue
+      }
+      if (fl.spent) continue
+      const victim = fl.owner === 1 ? p2 : p1
+      if (victim.y !== FLOOR || Math.abs(victim.x - fl.x) > FIGHTER_W / 2 + 8) continue
+      fl.spent = true
+      victim.hp = Math.max(0, victim.hp - FLAME_DAMAGE)
+      victim.hitFlash = 0.16
+      const burner = fl.owner === 1 ? p1 : p2
+      burner.dealt += FLAME_DAMAGE
+      if (burner.lifesteal > 0)
+        burner.hp = Math.min(burner.maxHp, burner.hp + FLAME_DAMAGE * burner.lifesteal)
+      playSfx('sting')
+    }
+  }
+
   /** Simple spacing-aware CPU: it respects range, whiff-punishes and guards. */
   const stepCpu = (f: Fighter, foe: Fighter, dt: number) => {
     const skill = versus ? 1 : opponent().skill
+    // Zombie Camouflage: a standard ladder zombie loses the player entirely
+    // and mills about. Bosses are too smart for it.
+    if (camouflaged(foe) && !f.boss) {
+      f.blocking = false
+      if (!busy(f)) f.x += (foe.x >= f.x ? -1 : 1) * BACK_SPEED * f.speed * 0.4 * dt
+      return
+    }
     const gap = Math.abs(foe.x - f.x) - FIGHTER_W
     const dir: 1 | -1 = foe.x >= f.x ? 1 : -1
 
@@ -761,8 +933,11 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
         stepFighter(p2, p1, dt, false)
       }
 
-      // Fighters cannot occupy the same space; push them apart evenly.
-      const overlap = FIGHTER_W - Math.abs(p1.x - p2.x)
+      stepFlames(dt)
+
+      // Fighters cannot occupy the same space; push them apart evenly — but a
+      // Shadow Dash runs straight through its target.
+      const overlap = dashing(p1) || dashing(p2) ? 0 : FIGHTER_W - Math.abs(p1.x - p2.x)
       if (overlap > 0) {
         const dir = p1.x <= p2.x ? 1 : -1
         p1.x -= (dir * overlap) / 2
@@ -849,6 +1024,9 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     ctx.save()
     ctx.translate(f.x, f.y)
     ctx.scale(f.facing * scale, scale)
+    // Camouflage fades the fighter into the pit; the dash smears it.
+    if (camouflaged(f)) ctx.globalAlpha = 0.35
+    else if (dashing(f)) ctx.globalAlpha = 0.75
     if (f.hitFlash > 0) {
       ctx.shadowColor = '#fca5a5'
       ctx.shadowBlur = 22
@@ -918,6 +1096,20 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       ctx.stroke()
     }
 
+    if (shielded(f)) {
+      // Riot Shield: a solid slab of light braced across the front.
+      const data = ABILITIES['riot-shield']
+      ctx.save()
+      ctx.shadowColor = data.color
+      ctx.shadowBlur = 20
+      ctx.globalAlpha = 0.85
+      plate(22, -FIGHTER_H + 4, 16, FIGHTER_H - 4, 6, data.color)
+      ctx.globalAlpha = 0.25
+      ctx.fillStyle = data.color
+      ctx.fillRect(22, -FIGHTER_H + 4, 40, FIGHTER_H - 4)
+      ctx.restore()
+    }
+
     // Front arm: it reaches exactly as far as the active hitbox.
     if (striking && data !== null) {
       const fistX = FIGHTER_W / 2 + data.reach - 10
@@ -969,6 +1161,30 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       ctx.fillStyle = f.specialCd === 0 ? '#a855f7' : '#7e22ce'
       const cw = ready * barW
       ctx.fillRect(flip ? left + barW - cw : left, 54, cw, 8)
+
+      // Class ability: its own bar, with the countdown spelled out.
+      if (!f.ability) return
+      const ab = ABILITIES[f.ability]
+      ctx.fillStyle = '#1e293b'
+      ctx.fillRect(left, 66, barW, 10)
+      const charge = f.abilityTimer > 0 ? 1 : 1 - f.abilityCd / ab.cooldown
+      const aw = charge * barW
+      ctx.fillStyle = f.abilityTimer > 0 ? '#fef08a' : f.abilityCd === 0 ? ab.color : '#1d4ed8'
+      ctx.fillRect(flip ? left + barW - aw : left, 66, aw, 10)
+      ctx.font = 'bold 10px ui-monospace, monospace'
+      ctx.fillStyle = '#e2e8f0'
+      ctx.textAlign = flip ? 'right' : 'left'
+      const state =
+        f.abilityTimer > 0
+          ? `ACTIVE ${f.abilityTimer.toFixed(1)}s`
+          : f.abilityCd > 0
+            ? `${f.abilityCd.toFixed(1)}s`
+            : 'READY'
+      ctx.fillText(
+        `${ab.tag} [${f.id === 1 ? 'E' : 'NUM1/U'}] ${state}`,
+        flip ? left + barW : left,
+        88,
+      )
     }
     drawBar(p1, 30, false)
     drawBar(p2, VIEW_W - 30 - barW, true)
@@ -1052,6 +1268,14 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       }
       if (line) ctx.fillText(line, x + cardW / 2, ty)
 
+      ctx.font = 'bold 10px ui-monospace, monospace'
+      ctx.fillStyle = c.ability ? ABILITIES[c.ability].color : '#475569'
+      ctx.fillText(
+        c.ability ? `ABL · ${ABILITIES[c.ability].tag}` : 'NO ACTIVE ABILITY',
+        x + cardW / 2,
+        ty + 18,
+      )
+
       ctx.font = 'bold 11px ui-monospace, monospace'
       if (p1Here) {
         ctx.fillStyle = locked[0] ? '#fcd34d' : '#fde68a'
@@ -1118,6 +1342,26 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       ctx.fill()
     }
 
+    // Shadow Dash embers burn on the floor between the fighters.
+    for (const fl of flames) {
+      const life = fl.life / FLAME_LIFE
+      ctx.save()
+      ctx.globalAlpha = 0.25 + life * 0.6
+      const fire = ctx.createLinearGradient(0, FLOOR - 34, 0, FLOOR)
+      fire.addColorStop(0, 'rgba(253,224,71,0.1)')
+      fire.addColorStop(0.5, '#f97316')
+      fire.addColorStop(1, '#b91c1c')
+      ctx.fillStyle = fire
+      const h = 14 + life * 22 + Math.sin(blink * 14 + fl.x) * 4
+      ctx.beginPath()
+      ctx.moveTo(fl.x - 16, FLOOR)
+      ctx.quadraticCurveTo(fl.x - 6, FLOOR - h, fl.x, FLOOR - h - 6)
+      ctx.quadraticCurveTo(fl.x + 6, FLOOR - h, fl.x + 16, FLOOR)
+      ctx.closePath()
+      ctx.fill()
+      ctx.restore()
+    }
+
     drawFighter(p1)
     drawFighter(p2)
 
@@ -1143,9 +1387,14 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       retroText('INSERT COIN', 196, 28, '#fcd34d', true)
       retroText('[1] ARCADE — PLAYER VS CPU LADDER', 260, 22, '#e2e8f0')
       retroText('[2] VERSUS — LOCAL 2 PLAYER', 296, 22, '#e2e8f0')
-      retroText('P1  WASD MOVE/JUMP · 1 LIGHT · 2 HEAVY · 3 SPECIAL · 4 BLOCK', 360, 15, '#94a3b8')
-      retroText('P2  ARROWS MOVE/JUMP · J LIGHT · K HEAVY · L SPECIAL · ; BLOCK', 384, 15, '#94a3b8')
-      retroText('BLOCK CUTS 82% OF DAMAGE — HEAVIES ARE PUNISHABLE ON BLOCK', 418, 14, '#65a30d')
+      retroText('P1  WASD · 1 LIGHT · 2 HEAVY · 3 SPECIAL · 4 BLOCK · E ABILITY', 360, 15, '#94a3b8')
+      retroText(
+        'P2  ARROWS · J LIGHT · K HEAVY · L SPECIAL · ; BLOCK · NUM1/U ABILITY',
+        384,
+        15,
+        '#94a3b8',
+      )
+      retroText('CLASS ABILITIES: SHADOW DASH · RIOT SHIELD · ZOMBIE CAMO', 418, 14, '#65a30d')
       retroText('6 STAGES — SURVIVE TO THE ROT SOVEREIGN', 442, 14, '#f43f5e')
     }
 
@@ -1180,8 +1429,15 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     // The cabinet swallows its own controls so the campaign never sees them.
     e.stopPropagation()
     if (['arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' '].includes(key)) e.preventDefault()
-    if (!e.repeat) pressed.add(key)
+    // Physical codes ride alongside the characters so numpad bindings work
+    // regardless of Num Lock.
+    const code = e.code.toLowerCase()
+    if (!e.repeat) {
+      pressed.add(key)
+      pressed.add(code)
+    }
     held.add(key)
+    held.add(code)
 
     if (key === 'escape') {
       close()
@@ -1198,6 +1454,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     if (!open) return
     e.stopPropagation()
     held.delete(e.key.toLowerCase())
+    held.delete(e.code.toLowerCase())
   }
 
   function close() {
@@ -1305,6 +1562,7 @@ function buildTouchPad(): TouchPad {
       button(id, 'heavy', 'HP', 'w-14'),
       button(id, 'special', 'SP', 'w-14 text-fuchsia-200'),
       button(id, 'block', 'BLK', 'w-14 text-sky-200'),
+      button(id, 'ability', 'ABL', 'w-14 col-span-2 text-lime-200'),
     )
     wrap.append(moveCol, actionCol)
     return wrap

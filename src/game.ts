@@ -31,7 +31,15 @@ import { bindInput, clearInput, keysPressed } from './input'
 import { touchAim, touchStick } from './TouchControls'
 import { settings } from './settings'
 import { AOE_TICK_COOLDOWN, AOE_TICK_DAMAGE, AoeTicker, aoeTickCount } from './aoe'
-import { HazardManager, OIL_FRICTION_LOSS, OIL_SLIDE_TIME, buildHazards } from './HazardManager'
+import {
+  BARREL_BLAST_RADIUS,
+  BARREL_DAMAGE,
+  HazardManager,
+  OIL_FRICTION_LOSS,
+  OIL_SLIDE_TIME,
+  SHOCK_STUN,
+  buildHazards,
+} from './HazardManager'
 
 export type GameState = 'menu' | 'playing' | 'won' | 'lost'
 
@@ -75,7 +83,7 @@ interface Player {
   lives: number
   safeTimer: number
   down: boolean
-  /** Player 2 aims and fires at the nearest enemy on its own. */
+  /** Player 2: aims off its own direction keys instead of the mouse. */
   auto: boolean
   /** Seconds left before the active ability can be triggered again. */
   abilityCooldown: number
@@ -375,6 +383,10 @@ interface Boss {
   regenerated: boolean
   /** Permanent movement multiplier layered on top of the phase bonus. */
   speedMult: number
+  /** Seconds of enrage glow left; the Colossus keeps it lit from phase 2. */
+  enrage: number
+  /** Rust Colossus phase 2: seconds until the next fly swarm is called. */
+  swarmTimer: number
   /** Runner Alpha: seconds until the next pack-summoning scream. */
   screamTimer: number
   /** Seconds the body has failed to make progress, used to unwedge it. */
@@ -682,7 +694,6 @@ const SURVIVOR_AGGRO_BIAS = 0.75
 /** Co-op camera keeps this much slack around the pair before zooming out. */
 const COOP_CAMERA_MARGIN = 420
 const MIN_ZOOM = 0.5
-const P2_AUTO_FIRE_RANGE = 620
 /** Click-to-move drops the order once the walker is this close. */
 const WALK_ARRIVE_RANGE = 14
 /** Radians per second player 2's muzzle sweeps while tracking a target. */
@@ -939,6 +950,11 @@ const COLOSSUS_MAX_HP = 26000
 const COLOSSUS_RADIUS = 62
 const COLOSSUS_SPEED = 118
 const COLOSSUS_CONTACT_DAMAGE = 25
+/** Enrage below half health: exactly +15% pace and a swarm every 15s. */
+const COLOSSUS_ENRAGE_SPEED = 1.15
+const COLOSSUS_SWARM_INTERVAL = 15
+const COLOSSUS_SWARM_COUNT = 7
+const COLOSSUS_ENRAGE_BANNER = 'THE RUST COLOSSUS ENRAGES'
 
 /** Swaps the primary slot for the Crucible's up-gunned rifle. */
 function arenaLoadout(loadout: Weapon[]): Weapon[] {
@@ -1552,6 +1568,8 @@ export class Game {
       attackCooldown: 0,
       regenerated: false,
       speedMult: 1,
+      enrage: 0,
+      swarmTimer: 0,
       screamTimer: ALPHA_SCREAM_INTERVAL,
       cloakTimer: STALKER_VISIBLE_TIME,
       cloaked: false,
@@ -2480,38 +2498,33 @@ export class Game {
     // Locked in the bed, a held direction snaps the muzzle straight onto that
     // heading — instant 360° tracking from the truck centre.
     const steered = locked && (move.x !== 0 || move.y !== 0)
-    if (steered) p.angle = Math.atan2(move.y, move.x)
+    if (steered && !p.auto) p.angle = Math.atan2(move.y, move.x)
+
+    // Every player has its own trigger; player 2 must never fire off player
+    // 1's button, in the bed or on foot.
+    const trigger = p.id === 2 ? keysPressed.shootingP2 : keysPressed.shooting
 
     if (p.auto) {
-      const mark = this.nearestEnemyTo(p, 1200)
-      if (!steered) {
-        // Continuous rotation towards the mark (or the heading being walked)
-        // instead of snapping the muzzle onto a cardinal direction.
-        const want = mark
-          ? Math.atan2(mark.y - p.y, mark.x - p.x)
-          : move.x !== 0 || move.y !== 0
-            ? Math.atan2(move.y, move.x)
-            : p.angle
-        const turn = angleDelta(want, p.angle)
+      // Player 2 is fully manual: the direction keys sweep the muzzle round
+      // at a fixed rate — no target acquisition, no assisted trigger.
+      if (move.x !== 0 || move.y !== 0) {
+        const turn = angleDelta(Math.atan2(move.y, move.x), p.angle)
         p.angle += clamp(turn, -P2_TURN_RATE * dt, P2_TURN_RATE * dt)
       }
-      // Hold fire unless the target is close and not behind a building.
-      const inRange = mark && Math.hypot(mark.x - p.x, mark.y - p.y) < P2_AUTO_FIRE_RANGE
-      p.shooting =
-        keysPressed.shootingP2 || Boolean(inRange && mark && this.hasLineOfSight(p, mark))
+      p.shooting = trigger
       if (p.mag === 0) this.startReload(p)
     } else if (steered) {
-      p.shooting = keysPressed.shooting
+      p.shooting = trigger
     } else if (p.id === 1 && touchStick.engaged) {
       // Touchscreen: the muzzle follows the aim stick only, with no assist.
       if (touchAim.active) p.angle = touchAim.angle
-      p.shooting = keysPressed.shooting
+      p.shooting = trigger
     } else {
       this.mouseWorld.x = this.mouseScreen.x / this.zoom + this.camera.x
       this.mouseWorld.y = this.mouseScreen.y / this.zoom + this.camera.y
       p.angle = Math.atan2(this.mouseWorld.y - p.y, this.mouseWorld.x - p.x)
       // Held mouse button keeps the trigger down; movement above already ran.
-      p.shooting = keysPressed.shooting
+      p.shooting = trigger
     }
     p.hurtCooldown = Math.max(0, p.hurtCooldown - dt)
     p.recoil = Math.max(0, p.recoil - dt * RECOIL_RECOVERY)
@@ -2603,19 +2616,6 @@ export class Game {
       if (circleHitsWall(this.map, from.x + dx * t, from.y + dy * t, 2)) return false
     }
     return true
-  }
-
-  private nearestEnemyTo(from: { x: number; y: number }, range: number): Enemy | null {
-    let best: Enemy | null = null
-    let bestD = range
-    for (const e of this.enemies) {
-      const d = Math.hypot(e.x - from.x, e.y - from.y)
-      if (d < bestD) {
-        bestD = d
-        best = e
-      }
-    }
-    return best
   }
 
   /**
@@ -2871,11 +2871,7 @@ export class Game {
         p.swingHitBoss = true
         boss.hp -= damage
         boss.hurt = 0.12
-        if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
-          boss.phase = 2
-          boss.dashTimer = 2
-          playSfx('boss-roar')
-        }
+        this.checkBossPhase(boss)
       }
     }
 
@@ -2963,11 +2959,7 @@ export class Game {
         this.arenaOnHit(b, dealt, b.x, b.y, null)
         if (b.blast > 0) dead = true
         boss.hurt = 0.12
-        if (boss.hp <= boss.maxHp / 2 && boss.phase === 1) {
-          boss.phase = 2
-          boss.dashTimer = 2
-          playSfx('boss-roar')
-        }
+        this.checkBossPhase(boss)
         if (!b.pierce) dead = true
       }
       if (!dead) {
@@ -2979,6 +2971,14 @@ export class Game {
           if (crystal.hp <= 0) this.burstCrystal(c)
           if (!b.pierce) dead = true
           break
+        }
+      }
+      if (!dead && this.hazards) {
+        // Fuel drums soak the round and go up when they are spent.
+        const hit = this.hazards.hitBarrel(b.x, b.y, 3, b.damage)
+        if (hit) {
+          if (hit.destroyed) this.explodeBarrel(hit.barrel.x, hit.barrel.y)
+          if (!b.pierce) dead = true
         }
       }
       if (!dead) {
@@ -3044,6 +3044,75 @@ export class Game {
     if (boss && boss.hp > 0 && Math.hypot(boss.x - b.x, boss.y - b.y) < b.blast + boss.r) {
       boss.hp -= b.damage
       boss.hurt = 0.12
+      this.checkBossPhase(boss)
+    }
+  }
+
+  /**
+   * Half health flips a boss into phase 2. The Colossus enrages instead of
+   * simply speeding up: it glows, rumbles the ground, gains exactly 15% pace
+   * and starts calling fly swarms.
+   */
+  private checkBossPhase(b: Boss) {
+    if (b.phase === 2 || b.hp <= 0 || b.hp > b.maxHp / 2) return
+    b.phase = 2
+    b.dashTimer = 2
+    playSfx('boss-roar')
+    if (b.kind !== 'rust-colossus') return
+    b.speedMult = COLOSSUS_ENRAGE_SPEED
+    b.enrage = 1
+    b.swarmTimer = COLOSSUS_SWARM_INTERVAL
+    this.shake = Math.max(this.shake, 1.6)
+    this.announce(COLOSSUS_ENRAGE_BANNER)
+  }
+
+  /** Phase 2 Colossus: a swarm of flies boils out of its hide. */
+  private callFlySwarm(b: Boss) {
+    for (let i = 0; i < COLOSSUS_SWARM_COUNT; i++) {
+      if (this.enemies.length >= BOSS_BROOD_MAX + COLOSSUS_SWARM_COUNT) break
+      this.enemies.push(this.makeBug(this.openSpot(12, b, 90, 260)))
+    }
+    playSfx('boss-roar')
+  }
+
+  /**
+   * A shot fuel drum: heavy falloff damage to the swarm and the boss, a light
+   * singe for anyone standing too close, and neighbouring drums chain.
+   */
+  private explodeBarrel(x: number, y: number, depth = 0) {
+    const r = BARREL_BLAST_RADIUS
+    this.blasts.push({ x, y, r, life: BLAST_LIFE, maxLife: BLAST_LIFE })
+    this.shake = Math.max(this.shake, 0.8)
+    playSfx('explosion')
+
+    const falloff = (dist: number) => Math.max(0.35, 1 - dist / r)
+    for (let i = this.enemies.length - 1; i >= 0; i--) {
+      const e = this.enemies[i]
+      const d = Math.hypot(e.x - x, e.y - y)
+      if (d > r + e.r) continue
+      e.hp -= BARREL_DAMAGE * falloff(d) * this.enemyArmour
+      e.burn = Math.max(e.burn, BURN_DURATION)
+      if (e.hp <= 0) this.killEnemy(i)
+    }
+    const boss = this.boss
+    if (boss && boss.hp > 0) {
+      const d = Math.hypot(boss.x - x, boss.y - y)
+      if (d < r + boss.r) {
+        boss.hp -= BARREL_DAMAGE * falloff(d)
+        boss.hurt = 0.14
+        this.checkBossPhase(boss)
+      }
+    }
+    for (const p of this.alivePlayers) {
+      const d = Math.hypot(p.x - x, p.y - y)
+      if (d < r + p.r) this.damagePlayer(p, 18 * falloff(d))
+    }
+
+    // Chained drums, guarded so a tight cluster cannot recurse forever.
+    if (depth < 3 && this.hazards) {
+      for (const chained of this.hazards.takeBarrelsInRadius(x, y, r)) {
+        this.explodeBarrel(chained.x, chained.y, depth + 1)
+      }
     }
   }
 
@@ -3108,10 +3177,20 @@ export class Game {
       b.dashing -= dt
       this.moveCircle(b, b.dashDir.x * BOSS_DASH_SPEED * dt, b.dashDir.y * BOSS_DASH_SPEED * dt)
     } else if (prey) {
-      const speed = b.baseSpeed * (b.phase === 2 ? BOSS_ENRAGE_SPEED : 1)
-      this.walkBoss(b, b.angle, speed, dt)
+      // The Colossus' enrage is its own flat +15%, not the generic bonus.
+      const phaseBonus = b.phase === 2 && b.kind !== 'rust-colossus' ? BOSS_ENRAGE_SPEED : 1
+      this.walkBoss(b, b.angle, b.baseSpeed * b.speedMult * phaseBonus, dt)
     }
     this.unstickBoss(b, dt, prey)
+
+    if (b.kind === 'rust-colossus' && b.phase === 2) {
+      b.enrage += dt
+      b.swarmTimer -= dt
+      if (b.swarmTimer <= 0) {
+        b.swarmTimer = COLOSSUS_SWARM_INTERVAL
+        this.callFlySwarm(b)
+      }
+    }
 
     b.ringTimer -= dt
     if (b.ringTimer <= 0) {
@@ -3757,6 +3836,9 @@ export class Game {
         this.mutationSpeed *
         this.speedScale *
         (z.slow > 0 ? CRYO_SLOW : 1)
+
+      // A live floor plate pins whatever is standing on it.
+      if (this.hazards?.shocking(z.x, z.y, z.r)) z.stun = Math.max(z.stun, SHOCK_STUN)
 
       // A stunned enemy is frozen solid: no chasing, no attacking.
       if (z.stun > 0) {
@@ -5051,6 +5133,21 @@ export class Game {
     ctx.ellipse(b.x, b.y + b.r * 0.4, b.r * 1.05, b.r * 0.5, 0, 0, Math.PI * 2)
     ctx.fill()
     ctx.restore()
+
+    if (enraged) {
+      // Enrage aura: a pulsing red/orange corona around the whole body.
+      const pulse = 1 + Math.sin(b.wobble * 5) * 0.08
+      const halo = ctx.createRadialGradient(b.x, b.y, b.r * 0.6, b.x, b.y, b.r * 1.8 * pulse)
+      halo.addColorStop(0, 'rgba(249,115,22,0.45)')
+      halo.addColorStop(0.6, 'rgba(239,68,68,0.28)')
+      halo.addColorStop(1, 'rgba(239,68,68,0)')
+      ctx.save()
+      ctx.fillStyle = halo
+      ctx.beginPath()
+      ctx.arc(b.x, b.y, b.r * 1.8 * pulse, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
 
     ctx.save()
     ctx.translate(b.x, b.y - lift)
@@ -6420,7 +6517,7 @@ export class Game {
 
     const p2 = this.players[1]
     if (p2 && !p2.down) {
-      // Show where player 2's auto-aim is pointing.
+      // Show where player 2's muzzle is pointing.
       const len = 70
       ctx.save()
       this.applyWorldTransform()
