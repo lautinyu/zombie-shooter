@@ -52,7 +52,7 @@ type ActionId =
   | 'ability'
 
 /** Active class ability, one per playable fighter, on its own cooldown. */
-type AbilityId = 'shadow-dash' | 'riot-shield' | 'zombie-camo' | 'phase-shift'
+type AbilityId = 'shadow-dash' | 'riot-shield' | 'toxic-enrage' | 'phase-shift'
 
 interface AbilityData {
   name: string
@@ -79,12 +79,12 @@ const ABILITIES: Record<AbilityId, AbilityData> = {
     duration: 3,
     color: '#38bdf8',
   },
-  'zombie-camo': {
-    name: 'Zombie Camouflage',
-    tag: 'ZOMBIE CAMO',
+  'toxic-enrage': {
+    name: 'Toxic Enrage',
+    tag: 'TOXIC ENRAGE',
     cooldown: 13,
     duration: 4,
-    color: '#4ade80',
+    color: '#15803d',
   },
   'phase-shift': {
     name: 'Phase Shift',
@@ -94,6 +94,11 @@ const ABILITIES: Record<AbilityId, AbilityData> = {
     color: '#c4b5fd',
   },
 }
+
+/** Toxic Enrage: damage soaked, damage added and share of damage leeched. */
+const ENRAGE_SOAK = 0.4
+const ENRAGE_POWER = 1.15
+const ENRAGE_LEECH = 0.15
 
 /** Attacks that keep the Phase Shift afterglow once the 2s window closes. */
 const PHASE_ECHO_HITS = 2
@@ -255,7 +260,7 @@ const ROSTER: Character[] = [
     hpScale: 0.95,
     dodge: 0,
     trait: '+10% SPEED & ATTACK SPEED · -5% HP',
-    ability: 'zombie-camo',
+    ability: 'toxic-enrage',
   },
   {
     name: 'Ghost',
@@ -543,8 +548,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     f.ability === 'shadow-dash' && f.abilityTimer > 0
   const shielded = (f: Fighter): boolean =>
     f.ability === 'riot-shield' && f.abilityTimer > 0
-  const camouflaged = (f: Fighter): boolean =>
-    f.ability === 'zombie-camo' && f.abilityTimer > 0
+  const enraged = (f: Fighter): boolean =>
+    f.ability === 'toxic-enrage' && f.abilityTimer > 0
   const phased = (f: Fighter): boolean =>
     f.ability === 'phase-shift' && f.abilityTimer > 0
 
@@ -643,7 +648,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
         f.phaseEcho = PHASE_ECHO_HITS
         f.echoes = []
       }
-      playSfx(f.ability === 'riot-shield' ? 'barricade' : 'cloak')
+      playSfx(f.ability === 'riot-shield' ? 'barricade' : 'boss-roar')
     }
   }
 
@@ -685,7 +690,8 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     attacker.moveHit = true
     // The Riot Shield eats the blow outright and throws part of it back.
     if (shielded(defender) && defender.facing !== attacker.facing) {
-      const back = data.damage * SHIELD_REFLECT * defender.power
+      let back = data.damage * SHIELD_REFLECT * defender.power
+      if (enraged(attacker)) back *= 1 - ENRAGE_SOAK
       attacker.hp = Math.max(0, attacker.hp - back)
       defender.dealt += back
       attacker.stun = data.hitstun
@@ -712,11 +718,15 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     }
     const guarding =
       defender.blocking && defender.facing !== attacker.facing && defender.y === FLOOR
-    const damage = (guarding ? data.damage * CHIP_RATIO : data.damage) * attacker.power
+    // Toxic Enrage swings both ways: the rager hits harder and drinks back a
+    // slice of it, and soaks a chunk of whatever lands on it.
+    const power = attacker.power * (enraged(attacker) ? ENRAGE_POWER : 1)
+    let damage = (guarding ? data.damage * CHIP_RATIO : data.damage) * power
+    if (enraged(defender)) damage *= 1 - ENRAGE_SOAK
     defender.hp = Math.max(0, defender.hp - damage)
     attacker.dealt += damage
-    if (attacker.lifesteal > 0)
-      attacker.hp = Math.min(attacker.maxHp, attacker.hp + damage * attacker.lifesteal)
+    const leech = attacker.lifesteal + (enraged(attacker) ? ENRAGE_LEECH : 0)
+    if (leech > 0) attacker.hp = Math.min(attacker.maxHp, attacker.hp + damage * leech)
     defender.stun = guarding ? data.hitstun * 0.6 : data.hitstun
     defender.move = null
     defender.hitFlash = guarding ? 0.1 : 0.22
@@ -838,12 +848,13 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       if (phased(victim)) continue
       if (victim.y !== FLOOR || Math.abs(victim.x - fl.x) > FIGHTER_W / 2 + 8) continue
       fl.spent = true
-      victim.hp = Math.max(0, victim.hp - FLAME_DAMAGE)
+      const burn = FLAME_DAMAGE * (enraged(victim) ? 1 - ENRAGE_SOAK : 1)
+      victim.hp = Math.max(0, victim.hp - burn)
       victim.hitFlash = 0.16
       const burner = fl.owner === 1 ? p1 : p2
-      burner.dealt += FLAME_DAMAGE
+      burner.dealt += burn
       if (burner.lifesteal > 0)
-        burner.hp = Math.min(burner.maxHp, burner.hp + FLAME_DAMAGE * burner.lifesteal)
+        burner.hp = Math.min(burner.maxHp, burner.hp + burn * burner.lifesteal)
       playSfx('sting')
     }
   }
@@ -851,13 +862,6 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
   /** Simple spacing-aware CPU: it respects range, whiff-punishes and guards. */
   const stepCpu = (f: Fighter, foe: Fighter, dt: number) => {
     const skill = versus ? 1 : opponent().skill
-    // Zombie Camouflage: a standard ladder zombie loses the player entirely
-    // and mills about. Bosses are too smart for it.
-    if (camouflaged(foe) && !f.boss) {
-      f.blocking = false
-      if (!busy(f)) f.x += (foe.x >= f.x ? -1 : 1) * BACK_SPEED * f.speed * 0.4 * dt
-      return
-    }
     const gap = Math.abs(foe.x - f.x) - FIGHTER_W
     const dir: 1 | -1 = foe.x >= f.x ? 1 : -1
 
@@ -1067,10 +1071,13 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     ctx.save()
     ctx.translate(f.x, f.y)
     ctx.scale(f.facing * scale, scale)
-    // Camouflage fades the fighter into the pit; the dash and phase smear it.
-    if (camouflaged(f)) ctx.globalAlpha = 0.35
-    else if (phased(f)) ctx.globalAlpha = 0.5
+    // The phase and the dash both smear the fighter; the rage stains it.
+    if (phased(f)) ctx.globalAlpha = 0.5
     else if (dashing(f)) ctx.globalAlpha = 0.75
+    if (enraged(f)) {
+      ctx.shadowColor = ABILITIES['toxic-enrage'].color
+      ctx.shadowBlur = 26
+    }
     if (f.hitFlash > 0) {
       ctx.shadowColor = '#fca5a5'
       ctx.shadowBlur = 22
@@ -1421,6 +1428,25 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
       }
     }
 
+    // Toxic Enrage: a churning dark green haze wrapped round the rager.
+    for (const f of [p1, p2]) {
+      if (!enraged(f)) continue
+      const pulse = 1 + Math.sin(performance.now() / 90) * 0.06
+      ctx.save()
+      ctx.globalAlpha = 0.34
+      ctx.translate(f.x, f.y - FIGHTER_H / 2)
+      ctx.scale(pulse, pulse)
+      const glow = ctx.createRadialGradient(0, 0, 8, 0, 0, FIGHTER_H * 0.75)
+      glow.addColorStop(0, 'rgba(74,222,128,0.85)')
+      glow.addColorStop(0.55, 'rgba(21,128,61,0.55)')
+      glow.addColorStop(1, 'rgba(20,83,45,0)')
+      ctx.fillStyle = glow
+      ctx.beginPath()
+      ctx.ellipse(0, 0, FIGHTER_W * 1.1, FIGHTER_H * 0.72, 0, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+
     drawFighter(p1)
     drawFighter(p2)
 
@@ -1456,7 +1482,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
         '#94a3b8',
       )
       retroText(
-        'ABILITIES: SHADOW DASH · RIOT SHIELD · ZOMBIE CAMO · PHASE SHIFT',
+        'ABILITIES: SHADOW DASH · RIOT SHIELD · TOXIC ENRAGE · PHASE SHIFT',
         418,
         14,
         '#65a30d',
