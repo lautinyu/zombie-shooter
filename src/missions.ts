@@ -154,6 +154,11 @@ export interface Mission {
   truckHp?: number
   /** Seconds of swarm survival before the boss drops on 'arena' missions. */
   arenaTime?: number
+  /**
+   * New Game+ scenes live outside the chapter boards: they run as one ordered
+   * sequence launched from the New Game+ menu, not from mission select.
+   */
+  ngPlus?: boolean
 }
 
 export const MISSIONS: Mission[] = [
@@ -707,6 +712,65 @@ export const MISSIONS: Mission[] = [
     density: 1.4,
     chapter: 4,
   },
+
+  // New Game+ — the alien threat that dropped out of the craft. These are
+  // played as a straight sequence from the New Game+ menu; clearing one opens
+  // the next, and none of them appear on a chapter board.
+  {
+    id: 'ng-1',
+    name: 'Scene 1 · The Impact Basin',
+    map: 'impactbasin',
+    type: 'hunt',
+    target: 45,
+    survivors: 0,
+    description:
+      'The craft burned a glass crater into the flats east of the Colossus, and the things it dropped are still wet from the landing.',
+    objective: 'Clear 45 of the drop-pod brood out of the basin.',
+    path: null,
+    unlocks: ['ng-2'],
+    payout: 3,
+    rewardBase: 150,
+    density: 1.6,
+    chapter: 4,
+    ngPlus: true,
+  },
+  {
+    id: 'ng-2',
+    name: 'Scene 2 · The Hollow Spire',
+    map: 'hollowspire',
+    type: 'hold',
+    target: 0,
+    survivors: 0,
+    description:
+      'A spire of bone and resin grew out of the crater overnight. Whatever is inside it wants the ground around it cleared.',
+    objective: 'Hold the spire floor for 3 minutes while the brood pours out.',
+    path: null,
+    unlocks: ['ng-3'],
+    payout: 3.2,
+    rewardBase: 165,
+    holdTime: 180,
+    density: 1.7,
+    chapter: 4,
+    ngPlus: true,
+  },
+  {
+    id: 'ng-3',
+    name: 'Scene 3 · The Harvest Field',
+    map: 'harvester',
+    type: 'hunt',
+    target: 70,
+    survivors: 0,
+    description:
+      'Directly under the craft, the field is being stripped. This is as close to it as anyone has stood and walked away.',
+    objective: 'Break the harvest: put down 70 of them under the craft.',
+    path: null,
+    unlocks: [],
+    payout: 3.5,
+    rewardBase: 185,
+    density: 1.8,
+    chapter: 4,
+    ngPlus: true,
+  },
 ]
 
 export function missionById(id: string): Mission {
@@ -736,7 +800,21 @@ export function bossesDefeated(completed: string[]): number {
  * three paths stay open in parallel; the finale needs two path bosses dead.
  */
 export function chapterMissions(chapter: ChapterId): Mission[] {
-  return MISSIONS.filter((m) => m.chapter === chapter)
+  return MISSIONS.filter((m) => m.chapter === chapter && !m.ngPlus)
+}
+
+/** The New Game+ scenes, in the order they are played. */
+export function ngPlusScenes(): Mission[] {
+  return MISSIONS.filter((m) => m.ngPlus)
+}
+
+/**
+ * The scene the player is up to: the first uncleared one, or the last scene
+ * once the whole sequence is done so it stays replayable.
+ */
+export function ngPlusNextScene(completed: string[]): Mission {
+  const scenes = ngPlusScenes()
+  return scenes.find((m) => !completed.includes(m.id)) ?? scenes[scenes.length - 1]
 }
 
 /** Chapter 2 travel opens the moment the Hive Mother is dead. */

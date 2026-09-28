@@ -11,6 +11,8 @@ import {
   chapterUnlocked,
   missionMapName,
   missionUnlocked,
+  ngPlusNextScene,
+  ngPlusScenes,
   pathComplete,
   pathMissions,
 } from './missions'
@@ -47,7 +49,7 @@ import { mountEndlessGauntlet } from './EndlessGauntlet'
 import { mountFightingArcade } from './FightingArcade'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
-import { onSettingsChange } from './settings'
+import { onSettingsChange, settings } from './settings'
 import type { ArcadeGameId } from './arcadeStats'
 
 declare global {
@@ -225,6 +227,47 @@ app.innerHTML = `
         <span class="font-semibold text-orange-300">Orange Plague Bugs</span> are fast and sting — five stings and you turn.
         <div class="mt-2"><span class="font-semibold text-slate-200">Co-op:</span> Player 2 moves with the Arrow keys, auto-aims at the nearest enemy and fires on its own, or on demand with <span class="font-mono text-slate-200">.</span>, <span class="font-mono text-slate-200">Numpad 0</span> or <span class="font-mono text-slate-200">Right Ctrl</span>. Their ability is <span class="font-mono text-slate-200">M</span> (barricade <span class="font-mono text-slate-200">L</span>), and <span class="font-mono text-slate-200">N</span> swaps their weapon.</div>
       </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Game+ menu: same furniture as the main menu, alien skin -->
+  <div id="ngplus" class="absolute inset-0 z-20 hidden h-screen max-h-screen flex-col overflow-hidden bg-[#06030f]">
+    <canvas id="ng-bg" class="pointer-events-none absolute inset-0 h-full w-full"></canvas>
+    <header class="relative z-10 shrink-0 border-b border-fuchsia-400/20 bg-black/55 px-6 pb-3 pt-4 backdrop-blur-md">
+      <div class="mx-auto w-full max-w-4xl">
+        <h1 class="text-center text-4xl font-black tracking-tight text-fuchsia-300 drop-shadow">NEW GAME+</h1>
+        <div class="menu-version absolute left-6 top-5 font-mono text-xs font-bold text-fuchsia-200/70"></div>
+        <button id="ng-profile-chip" class="absolute right-6 top-4 flex items-center gap-2 rounded-full bg-white/5 py-1.5 pl-2 pr-4 text-sm font-bold text-slate-200 ring-1 ring-fuchsia-300/30 hover:bg-white/10">
+          <span id="ng-profile-avatar" class="text-xl leading-none">🧟</span>
+          <span id="ng-profile-name">Set Profile</span>
+        </button>
+        <div class="mt-2 flex justify-center">
+          <canvas id="ng-banner" width="760" height="86" class="h-[86px] w-[min(92vw,760px)]"></canvas>
+        </div>
+        <nav class="mt-3 flex flex-wrap justify-center gap-3">
+          <button id="ng-shop-btn" class="rounded-lg bg-yellow-500/15 px-6 py-2 text-sm font-bold text-yellow-300 ring-1 ring-yellow-400/40 hover:bg-yellow-500/25">Weapons Shop</button>
+          <button id="ng-locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
+          <button id="ng-textures-btn" class="rounded-lg bg-violet-500/15 px-6 py-2 text-sm font-bold text-violet-300 ring-1 ring-violet-400/40 hover:bg-violet-500/25">Texture Pack</button>
+          <button id="ng-arcade-btn" class="rounded-lg bg-cyan-500/20 px-6 py-2 text-sm font-black uppercase tracking-widest text-cyan-200 ring-2 ring-cyan-400/60 hover:bg-cyan-500/35">🕹️ Arcade Hub</button>
+          <button id="ng-profile-btn" class="rounded-lg bg-emerald-500/15 px-6 py-2 text-sm font-bold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/25">👤 Profile</button>
+          <button id="ng-settings-btn" class="rounded-lg bg-slate-500/15 px-6 py-2 text-sm font-bold text-slate-200 ring-1 ring-slate-400/40 hover:bg-slate-500/25">⚙️ Settings</button>
+        </nav>
+      </div>
+    </header>
+    <div class="relative z-10 min-h-0 flex-1 overflow-y-auto px-6 pb-10 pt-4">
+      <div class="mx-auto w-full max-w-4xl">
+        <p class="text-center text-sm text-fuchsia-200/70">The craft is still overhead. Fight the scenes in order — clear one and the next opens.</p>
+        <div class="mt-4 flex justify-center">
+          <button id="ng-start-btn" class="rounded-xl bg-fuchsia-500 px-10 py-3 text-lg font-black tracking-wide text-fuchsia-950 hover:bg-fuchsia-400">Start Game</button>
+        </div>
+        <div class="mt-4 flex items-center justify-center gap-2 text-xs">
+          <span class="font-semibold uppercase tracking-wider text-fuchsia-200/70">Players</span>
+          <button id="ng-players-1" class="rounded-lg px-4 py-1.5 font-bold">1 Player</button>
+          <button id="ng-players-2" class="rounded-lg px-4 py-1.5 font-bold">2 Players</button>
+        </div>
+        <div id="ng-scenes" class="mt-6 space-y-3"></div>
+        <button id="ng-back-btn" class="mt-8 w-full rounded-xl bg-orange-500/20 px-6 py-4 text-center text-base font-black uppercase tracking-widest text-orange-200 ring-2 ring-orange-400/60 hover:bg-orange-500/30">⬅️ Back to Chapter 4 Main Game</button>
       </div>
     </div>
   </div>
@@ -536,35 +579,318 @@ function renderChapterFour() {
 }
 
 /**
- * Post-campaign teaser: New Game+ is the door to the alien threat that came
- * down after the Colossus. Nothing resets and nothing scales — it only shows
- * what is being built next.
+ * Post-campaign door: clearing the Colossus opens New Game+, the alien threat
+ * that dropped out of the craft. Nothing resets and nothing scales — the
+ * campaign save is untouched.
  */
 function ngPlusPanel(): HTMLElement {
   const wrap = document.createElement('div')
   wrap.className = 'rounded-2xl bg-fuchsia-500/5 p-4 ring-1 ring-fuchsia-400/30'
+  const cleared = ngPlusScenes().filter((s) => profile.completed.includes(s.id)).length
   wrap.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-fuchsia-200">🛸 New Game+ · Unlocked</h3>
-    <p class="mt-1 text-xs text-slate-400">You put the Rust Colossus down and watched something far worse drop out of that craft. New Game+ is where the alien threat campaign will live — your gear, currency and campaign progress stay exactly as they are.</p>
+    <p class="mt-1 text-xs text-slate-400">You put the Rust Colossus down and watched something far worse drop out of that craft. New Game+ runs its own sequence of scenes under the ship — ${cleared}/${ngPlusScenes().length} cleared. Your gear, currency and campaign progress stay exactly as they are.</p>
   `
   const btn = document.createElement('button')
   btn.className =
     'mt-3 w-full rounded-xl bg-fuchsia-500/20 px-6 py-3 text-center text-base font-black tracking-wide text-fuchsia-100 ring-2 ring-fuchsia-400/60 transition hover:bg-fuchsia-500/30'
   btn.textContent = '🛸 ENTER NEW GAME+'
-  const note = document.createElement('div')
-  note.className = 'mt-3 hidden rounded-xl bg-black/40 p-4 text-xs text-slate-300 ring-1 ring-fuchsia-400/40'
-  note.innerHTML = `
-    <div class="text-sm font-black uppercase tracking-widest text-fuchsia-300">🔒 Coming Soon</div>
-    <p class="mt-2">The winged, tentacled things the UFO dropped are still out there, and the missions that hunt them are in development. No new stages are playable yet — nothing has been reset, and your save is untouched.</p>
-    <p class="mt-2 text-slate-500">Planned: alien hive sites, the drop-pod swarms, and the craft itself.</p>
-  `
-  btn.addEventListener('click', () => {
-    note.classList.toggle('hidden')
-  })
+  btn.addEventListener('click', openNgPlus)
   wrap.appendChild(btn)
-  wrap.appendChild(note)
   return wrap
 }
+
+/* ------------------------------------------------------------- New Game+ UI */
+
+const ngMenu = el('ngplus')
+const ngSceneList = el('ng-scenes')
+const ngBanner = el<HTMLCanvasElement>('ng-banner')
+const ngBg = el<HTMLCanvasElement>('ng-bg')
+/** True while the player is inside New Game+ instead of the campaign menu. */
+let ngMode = false
+let ngBgFrame = 0
+
+function openNgPlus() {
+  ngMode = true
+  resumeAudio()
+  show(menu, false)
+  show(ngMenu, true)
+  renderNgPlus()
+  startNgBackground()
+  playMusic('menu')
+}
+
+function closeNgPlus() {
+  ngMode = false
+  stopNgBackground()
+  show(ngMenu, false)
+  show(menu, true)
+  persist()
+}
+
+/** Overlays hand control back to whichever menu the player came from. */
+function backToMenu() {
+  if (ngMode) {
+    show(menu, false)
+    show(ngMenu, true)
+    renderNgPlus()
+    startNgBackground()
+    return
+  }
+  show(menu, true)
+}
+
+function renderNgPlus() {
+  const s = settings()
+  el('ng-profile-avatar').textContent = s.avatar
+  el('ng-profile-name').textContent = s.playerName || 'Set Profile'
+  el('ng-players-1').className = slotButtonClass(profile.players === 1)
+  el('ng-players-2').className = slotButtonClass(profile.players === 2)
+  drawNgBanner()
+  renderNgScenes()
+}
+
+/** Scene rows: cleared, the one you are up to, then locked stages behind it. */
+function renderNgScenes() {
+  ngSceneList.innerHTML = ''
+  const scenes = ngPlusScenes()
+  const next = ngPlusNextScene(profile.completed)
+  for (const scene of scenes) {
+    const done = profile.completed.includes(scene.id)
+    const active = scene.id === next.id
+    const row = document.createElement('button')
+    row.disabled = !done && !active
+    row.className = `w-full rounded-2xl p-4 text-left ring-1 transition ${
+      active
+        ? 'bg-fuchsia-500/15 ring-fuchsia-400/70 hover:bg-fuchsia-500/25'
+        : done
+          ? 'bg-emerald-500/10 ring-emerald-400/40 hover:bg-emerald-500/20'
+          : 'bg-black/40 ring-white/10 opacity-60'
+    }`
+    const tag = done ? 'CLEARED' : active ? 'NEXT SCENE' : '🔒 LOCKED'
+    const tagColor = done ? 'text-emerald-300' : active ? 'text-fuchsia-300' : 'text-slate-500'
+    row.innerHTML = `
+      <div class="flex items-center justify-between gap-3">
+        <span class="text-lg font-black text-white">${scene.name}</span>
+        <span class="text-xs font-black uppercase tracking-widest ${tagColor}">${tag}</span>
+      </div>
+      <p class="mt-1 text-xs text-slate-400">${done || active ? scene.description : 'Clear the scene before it to see what is waiting here.'}</p>
+      ${done || active ? `<p class="mt-2 text-xs font-semibold text-fuchsia-200/80">${scene.objective}</p>` : ''}
+    `
+    if (done || active) row.addEventListener('click', () => launchNgScene(scene))
+    ngSceneList.appendChild(row)
+  }
+}
+
+/** Start Game in New Game+ always drops into the scene you are up to. */
+function startNgPlus() {
+  launchNgScene(ngPlusNextScene(profile.completed))
+}
+
+function launchNgScene(scene: Mission) {
+  resumeAudio()
+  stopNgBackground()
+  show(ngMenu, false)
+  launch(scene)
+}
+
+/** The "NEXT SCENE / CONTINUE?" plate that sits where the currency row does. */
+function drawNgBanner() {
+  const ctx = ngBanner.getContext('2d')
+  if (!ctx) return
+  const w = ngBanner.width
+  ctx.clearRect(0, 0, w, ngBanner.height)
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+
+  ctx.font = '900 34px system-ui, sans-serif'
+  ctx.shadowColor = 'rgba(217,70,239,0.85)'
+  ctx.shadowBlur = 22
+  ctx.fillStyle = '#f5d0fe'
+  ctx.fillText('NEXT SCENE', w / 2 - 118, 30)
+  ctx.fillStyle = '#67e8f9'
+  ctx.fillText('CONTINUE?', w / 2 + 118, 30)
+  ctx.shadowBlur = 0
+  ctx.fillStyle = '#a855f7'
+  ctx.font = '900 30px system-ui, sans-serif'
+  ctx.fillText('/', w / 2, 30)
+
+  // Twin underline: a solid rule over a dashed chase that scrolls slowly.
+  const left = w / 2 - 300
+  const right = w / 2 + 300
+  const grad = ctx.createLinearGradient(left, 0, right, 0)
+  grad.addColorStop(0, 'rgba(217,70,239,0)')
+  grad.addColorStop(0.5, 'rgba(232,121,249,1)')
+  grad.addColorStop(1, 'rgba(34,211,238,0)')
+  ctx.strokeStyle = grad
+  ctx.lineWidth = 3
+  ctx.beginPath()
+  ctx.moveTo(left, 56)
+  ctx.lineTo(right, 56)
+  ctx.stroke()
+  ctx.setLineDash([16, 10])
+  ctx.lineDashOffset = -(performance.now() / 45) % 26
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(left + 40, 68)
+  ctx.lineTo(right - 40, 68)
+  ctx.stroke()
+  ctx.setLineDash([])
+}
+
+/** Animated glimpse of the Chapter 5 sky: the craft still hanging overhead. */
+function drawNgBackground() {
+  const ctx = ngBg.getContext('2d')
+  if (!ctx) return
+  const w = ngBg.clientWidth || window.innerWidth
+  const h = ngBg.clientHeight || window.innerHeight
+  if (ngBg.width !== w || ngBg.height !== h) {
+    ngBg.width = w
+    ngBg.height = h
+  }
+  const t = performance.now() / 1000
+
+  const sky = ctx.createLinearGradient(0, 0, 0, h)
+  sky.addColorStop(0, '#1a0733')
+  sky.addColorStop(0.55, '#2a0b3f')
+  sky.addColorStop(1, '#06030f')
+  ctx.fillStyle = sky
+  ctx.fillRect(0, 0, w, h)
+
+  // Stars, seeded off their index so they hold still between frames.
+  for (let i = 0; i < 90; i++) {
+    const x = ((i * 9301 + 49297) % 233280) / 233280 * w
+    const y = ((i * 4271 + 13) % 99991) / 99991 * h * 0.62
+    ctx.globalAlpha = 0.25 + 0.5 * Math.abs(Math.sin(t * 0.8 + i))
+    ctx.fillStyle = '#e9d5ff'
+    ctx.fillRect(x, y, 2, 2)
+  }
+  ctx.globalAlpha = 1
+
+  const cx = w / 2
+  const cy = h * 0.3 + Math.sin(t * 0.6) * 10
+
+  // Harvest beam down onto the field.
+  const beam = ctx.createLinearGradient(cx, cy, cx, h)
+  beam.addColorStop(0, 'rgba(232,121,249,0.35)')
+  beam.addColorStop(1, 'rgba(34,211,238,0)')
+  ctx.fillStyle = beam
+  ctx.beginPath()
+  ctx.moveTo(cx - 70, cy)
+  ctx.lineTo(cx + 70, cy)
+  ctx.lineTo(cx + w * 0.3, h)
+  ctx.lineTo(cx - w * 0.3, h)
+  ctx.closePath()
+  ctx.fill()
+
+  // The craft.
+  ctx.fillStyle = '#4c1d95'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy, 190, 42, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#7c3aed'
+  ctx.beginPath()
+  ctx.ellipse(cx, cy - 22, 96, 38, 0, Math.PI, 0)
+  ctx.fill()
+  for (let i = 0; i < 9; i++) {
+    const a = t * 1.1 + (i / 9) * Math.PI * 2
+    ctx.globalAlpha = 0.45 + 0.45 * Math.sin(a * 2)
+    ctx.fillStyle = '#22d3ee'
+    ctx.beginPath()
+    ctx.arc(cx + Math.cos(a) * 160, cy + 16 + Math.sin(a) * 10, 5, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  ctx.globalAlpha = 1
+
+  // Spires of the hollow ridge on the horizon.
+  ctx.fillStyle = '#120a22'
+  const base = h * 0.78
+  for (let i = -1; i < 9; i++) {
+    const x = (i / 8) * w + Math.sin(i * 2.3) * 30
+    const peak = base - 90 - Math.abs(Math.sin(i * 1.7)) * 150
+    ctx.beginPath()
+    ctx.moveTo(x - 90, base)
+    ctx.lineTo(x, peak)
+    ctx.lineTo(x + 90, base)
+    ctx.closePath()
+    ctx.fill()
+  }
+  ctx.fillStyle = '#0a0616'
+  ctx.fillRect(0, base, w, h - base)
+
+  // Winged tentacle things drifting across the beam.
+  for (let i = 0; i < 7; i++) {
+    const drift = (t * (16 + i * 5) + i * 260) % (w + 240)
+    const x = w + 120 - drift
+    const y = h * 0.42 + Math.sin(t * 1.4 + i) * 26 + i * 18
+    const flap = Math.sin(t * 6 + i) * 10
+    ctx.fillStyle = 'rgba(168,85,247,0.75)'
+    ctx.beginPath()
+    ctx.ellipse(x, y, 11, 7, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = 'rgba(217,70,239,0.7)'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.moveTo(x - 10, y)
+    ctx.quadraticCurveTo(x - 26, y - 12 - flap, x - 38, y - 2)
+    ctx.moveTo(x + 10, y)
+    ctx.quadraticCurveTo(x + 26, y - 12 + flap, x + 38, y - 2)
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(126,34,206,0.8)'
+    ctx.lineWidth = 2
+    for (let k = -1; k <= 1; k++) {
+      ctx.beginPath()
+      ctx.moveTo(x + k * 4, y + 6)
+      ctx.quadraticCurveTo(x + k * 8, y + 16 + flap, x + k * 5, y + 26)
+      ctx.stroke()
+    }
+  }
+}
+
+function ngLoop() {
+  if (!ngMode) return
+  drawNgBackground()
+  drawNgBanner()
+  ngBgFrame = requestAnimationFrame(ngLoop)
+}
+
+function startNgBackground() {
+  cancelAnimationFrame(ngBgFrame)
+  ngBgFrame = requestAnimationFrame(ngLoop)
+}
+
+function stopNgBackground() {
+  cancelAnimationFrame(ngBgFrame)
+}
+
+el('ng-back-btn').addEventListener('click', closeNgPlus)
+el('ng-start-btn').addEventListener('click', startNgPlus)
+el('ng-players-1').addEventListener('click', () => {
+  setPlayers(1)
+  renderNgPlus()
+})
+el('ng-players-2').addEventListener('click', () => {
+  setPlayers(2)
+  renderNgPlus()
+})
+el('ng-shop-btn').addEventListener('click', () => {
+  show(ngMenu, false)
+  el('shop-btn').click()
+})
+el('ng-locker-btn').addEventListener('click', () => {
+  show(ngMenu, false)
+  el('locker-btn').click()
+})
+el('ng-textures-btn').addEventListener('click', () => {
+  show(ngMenu, false)
+  el('textures-btn').click()
+})
+el('ng-arcade-btn').addEventListener('click', () => {
+  show(ngMenu, false)
+  el('arcade-hub-btn').click()
+})
+el('ng-profile-btn').addEventListener('click', () => el('profile-btn').click())
+el('ng-profile-chip').addEventListener('click', () => el('profile-chip').click())
 
 function renderCampaign() {
   campaignEl.innerHTML = ''
@@ -653,7 +979,7 @@ function renderIntro() {
       resumeAudio()
       setTextures(pack.id)
       show(introScreen, false)
-      if (profile.character) show(menu, true)
+      if (profile.character) backToMenu()
       else show(characterScreen, true)
       playMusic('menu')
     })
@@ -824,7 +1150,7 @@ function renderCharacters() {
       }
       renderCharacters()
       show(characterScreen, false)
-      show(menu, true)
+      backToMenu()
     })
     characterList.appendChild(card)
   }
@@ -1095,7 +1421,7 @@ function leaveCabinet() {
     arcadeHub.open()
     return
   }
-  show(menu, true)
+  backToMenu()
   playMusic('menu')
 }
 
@@ -1117,7 +1443,7 @@ const arcadeHub = mountArcadeHub(
     CABINETS[game]()
   },
   () => {
-    show(menu, true)
+    backToMenu()
     playMusic('menu')
   },
 )
@@ -1157,7 +1483,7 @@ el('shop-btn').addEventListener('click', () => openArsenal('shop'))
 el('locker-btn').addEventListener('click', () => openArsenal('locker'))
 el('arsenal-close').addEventListener('click', () => {
   show(arsenalScreen, false)
-  show(menu, true)
+  backToMenu()
 })
 
 function show(node: HTMLElement, visible: boolean, display: 'flex' | 'block' = 'flex') {
@@ -1177,7 +1503,14 @@ game.onFinale = (boss) => {
 
 game.onStateChange = (state: GameState) => {
   show(hud, state === 'playing', 'block')
-  show(menu, state === 'menu')
+  show(menu, state === 'menu' && !ngMode)
+  show(ngMenu, state === 'menu' && ngMode)
+  if (state === 'menu' && ngMode) {
+    renderNgPlus()
+    startNgBackground()
+  } else {
+    stopNgBackground()
+  }
   show(winScreen, state === 'won')
   show(loseScreen, state === 'lost')
   if (state !== 'menu') {
@@ -1246,7 +1579,11 @@ game.onStateChange = (state: GameState) => {
         ? `${currentMission.name} complete — all ${currentMission.survivors} survivors extracted from ${where}.`
         : `${currentMission.name} complete — ${currentMission.target} zombies cleared in ${where}.`
     const nexts = currentMission.unlocks.filter((id) => !profile.completed.includes(id))
-    el('win-reward').textContent += nexts.length ? ` · New missions unlocked` : ''
+    el('win-reward').textContent += nexts.length
+      ? currentMission.ngPlus
+        ? ' · Next scene unlocked'
+        : ' · New missions unlocked'
+      : ''
   }
   if (state === 'lost') {
     const infected = game.deathCause === 'infection'

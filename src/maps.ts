@@ -38,6 +38,9 @@ export type MapId =
   | 'refinery'
   | 'dunes'
   | 'ironhold'
+  | 'impactbasin'
+  | 'hollowspire'
+  | 'harvester'
 
 /** Ground texture painted under everything else. */
 export type FloorStyle =
@@ -978,6 +981,89 @@ const IRONHOLD: GameMap = {
   ],
 }
 
+/** New Game+ scene 1: the glassed crater the craft burned into the flats. */
+const IMPACT_BASIN: GameMap = {
+  id: 'impactbasin',
+  name: 'The Impact Basin',
+  width: 2100,
+  height: 1700,
+  color: '#1b1430',
+  wallColor: '#6d4a9c',
+  wallEdge: '#301e52',
+  floor: 'organic',
+  accent: '#c084fc',
+  extraction: { x: 1900, y: 1520 },
+  walls: [
+    ...border(2100, 1700),
+    ...partitions([
+      { x: 480, y: 420, w: 300, h: 80 },
+      { x: 1320, y: 420, w: 300, h: 80 },
+      { x: 480, y: 1200, w: 300, h: 80 },
+      { x: 1320, y: 1200, w: 300, h: 80 },
+      { x: 980, y: 760, w: 160, h: 160 },
+    ]),
+  ],
+  // Pools of the craft's coolant, thick enough to wade in.
+  mud: [
+    { x: 300, y: 760, w: 280, h: 240 },
+    { x: 1520, y: 700, w: 280, h: 260 },
+  ],
+}
+
+/** New Game+ scene 2: the bone-white spire the drop pods grew overnight. */
+const HOLLOW_SPIRE: GameMap = {
+  id: 'hollowspire',
+  name: 'The Hollow Spire',
+  width: 1800,
+  height: 1800,
+  color: '#151a2e',
+  wallColor: '#7c5cc4',
+  wallEdge: '#2b2250',
+  floor: 'organic',
+  accent: '#a78bfa',
+  extraction: { x: 1620, y: 1620 },
+  walls: [
+    ...border(1800, 1800),
+    ...partitions([
+      { x: 760, y: 760, w: 280, h: 280 },
+      { x: 360, y: 360, w: 90, h: 320 },
+      { x: 1350, y: 360, w: 90, h: 320 },
+      { x: 360, y: 1120, w: 90, h: 320 },
+      { x: 1350, y: 1120, w: 90, h: 320 },
+      { x: 700, y: 300, w: 400, h: 80 },
+      { x: 700, y: 1420, w: 400, h: 80 },
+    ]),
+  ],
+}
+
+/** New Game+ scene 3: the harvesting field directly under the craft. */
+const HARVESTER: GameMap = {
+  id: 'harvester',
+  name: 'The Harvest Field',
+  width: 2400,
+  height: 1800,
+  color: '#101a24',
+  wallColor: '#4c7f9c',
+  wallEdge: '#1d3546',
+  floor: 'organic',
+  accent: '#22d3ee',
+  extraction: { x: 2200, y: 1620 },
+  walls: [
+    ...border(2400, 1800),
+    ...partitions([
+      { x: 520, y: 520, w: 200, h: 200 },
+      { x: 1660, y: 520, w: 200, h: 200 },
+      { x: 520, y: 1080, w: 200, h: 200 },
+      { x: 1660, y: 1080, w: 200, h: 200 },
+      { x: 1120, y: 820, w: 180, h: 180 },
+    ]),
+  ],
+  mud: [
+    { x: 940, y: 300, w: 520, h: 200 },
+    { x: 940, y: 1320, w: 520, h: 200 },
+  ],
+}
+
 export const MAPS: GameMap[] = [
   STREETS,
   WAREHOUSE,
@@ -1007,6 +1093,9 @@ export const MAPS: GameMap[] = [
   REFINERY,
   DUNES,
   IRONHOLD,
+  IMPACT_BASIN,
+  HOLLOW_SPIRE,
+  HARVESTER,
 ]
 
 /** True when the point sits inside one of the map's mud pits. */
