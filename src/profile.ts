@@ -5,7 +5,8 @@ import type { TexturePack } from './theme'
 import type { WeaponId } from './weapons'
 import { STARTER_WEAPONS, WEAPONS, weaponById } from './weapons'
 
-const STORAGE_KEY = 'zombie-shooter-profile-v1'
+export const PROFILE_KEY = 'zombie-shooter-profile-v1'
+const STORAGE_KEY = PROFILE_KEY
 
 export interface Profile {
   scrap: number
@@ -125,12 +126,21 @@ export function loadProfile(): Profile {
   }
 }
 
+type SaveListener = (profile: Profile) => void
+const saveListeners: SaveListener[] = []
+
+/** Notified after every local save, so the cloud layer can mirror it. */
+export function onProfileSave(listener: SaveListener): void {
+  saveListeners.push(listener)
+}
+
 export function saveProfile(profile: Profile) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(profile))
   } catch {
     // storage unavailable (private mode) — profile stays in memory only
   }
+  for (const listener of saveListeners) listener(profile)
 }
 
 // Economy is deliberately tight: premium guns take several successful runs.

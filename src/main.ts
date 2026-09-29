@@ -50,6 +50,7 @@ import { mountFightingArcade } from './FightingArcade'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
 import { onSettingsChange, settings } from './settings'
+import { startCloudSync } from './cloud/account'
 import type { ArcadeGameId } from './arcadeStats'
 
 declare global {
@@ -1451,6 +1452,9 @@ function enterCabinet(openCabinet: () => void) {
 }
 
 el('arcade-hub-btn').addEventListener('click', () => enterCabinet(() => arcadeHub.open()))
+
+// Mirror every local save into Firestore once an account is signed in.
+startCloudSync()
 
 const settingsPanel = mountSettings()
 el('settings-btn').addEventListener('click', () => {

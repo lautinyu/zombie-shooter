@@ -1,2 +1,6 @@
 node_modules
 dist
+
+# Local environment (Firebase web config)
+.env
+.env.local

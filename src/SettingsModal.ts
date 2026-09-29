@@ -15,6 +15,15 @@ import {
 import { playSfx } from './audio'
 import { clearProfile } from './profile'
 import { clearArcadeStats } from './arcadeStats'
+import {
+  PASSWORD_WARNING,
+  cloudAvailable,
+  currentAccount,
+  login,
+  logout,
+  onAccountChange,
+  register,
+} from './cloud/account'
 
 export interface SettingsPanel {
   open: (tab?: Tab) => void
@@ -49,6 +58,11 @@ export function mountSettings(): SettingsPanel {
   let open = false
   /** Second stage of the wipe: the confirm button only shows once armed. */
   let resetArmed = false
+  /** Last account message shown under the login form. */
+  let authNotice = ''
+  let authError = false
+  let authUsername = ''
+  let authBusy = false
 
   const close = () => {
     open = false
@@ -85,6 +99,55 @@ export function mountSettings(): SettingsPanel {
     ).join('')
   }
 
+  const accountSection = () => {
+    const s = settings()
+    const account = currentAccount()
+    const notice = authNotice
+      ? `<p class="mt-3 text-xs font-bold ${authError ? 'text-rose-300' : 'text-emerald-300'}">${authNotice}</p>`
+      : ''
+    if (!cloudAvailable()) {
+      return `
+        <div class="mb-8 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+          <div class="text-xs font-black uppercase tracking-widest text-slate-300">Account</div>
+          <p class="mt-2 text-xs text-slate-400">Cloud saves are switched off on this build — you are playing as a guest and progress is stored in this browser only.</p>
+        </div>`
+    }
+    if (account) {
+      return `
+        <div class="mb-8 rounded-xl bg-emerald-500/5 p-4 ring-1 ring-emerald-400/30">
+          <div class="text-xs font-black uppercase tracking-widest text-slate-300">Account</div>
+          <div class="mt-3 flex items-center gap-4">
+            <div class="flex h-14 w-14 items-center justify-center rounded-xl bg-white/10 text-3xl leading-none ring-2 ring-emerald-400/60">${s.avatar}</div>
+            <div class="min-w-0">
+              <div class="truncate text-lg font-black text-white">${account.username}</div>
+              <div class="text-xs font-bold text-emerald-300">🟢 Cloud Save Active</div>
+            </div>
+            <button id="account-logout" class="ml-auto rounded-lg bg-white/10 px-5 py-2 text-xs font-black uppercase tracking-widest text-slate-100 ring-1 ring-white/15 hover:bg-white/20">Log Out</button>
+          </div>
+          <p class="mt-3 text-[11px] text-slate-500">Progress, loadout, currency, arcade records, keybindings and audio are saved to the cloud as you play.</p>
+          ${notice}
+        </div>`
+    }
+    return `
+      <div class="mb-8 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+        <div class="text-xs font-black uppercase tracking-widest text-slate-300">Account</div>
+        <p class="mt-1 text-xs text-slate-400">Log in to carry your campaign, loadout and high scores to any device.</p>
+        <div class="mt-3 grid gap-3 sm:grid-cols-2">
+          <input id="account-username" type="text" autocomplete="username" placeholder="Username" value="${authUsername}"
+            class="w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/15 outline-none focus:ring-emerald-400/60" />
+          <input id="account-password" type="password" autocomplete="current-password" placeholder="Password"
+            class="w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/15 outline-none focus:ring-emerald-400/60" />
+        </div>
+        <div class="mt-3 flex flex-wrap gap-2">
+          <button id="account-login" class="rounded-lg bg-emerald-500/80 px-5 py-2 text-xs font-black uppercase tracking-widest text-slate-950 hover:bg-emerald-400">Log In</button>
+          <button id="account-register" class="rounded-lg bg-white/10 px-5 py-2 text-xs font-black uppercase tracking-widest text-slate-100 ring-1 ring-white/15 hover:bg-white/20">Create Account</button>
+          <button id="account-guest" class="rounded-lg bg-white/5 px-5 py-2 text-xs font-black uppercase tracking-widest text-slate-400 ring-1 ring-white/10 hover:bg-white/10">Play as Guest / Offline</button>
+        </div>
+        <p class="mt-3 text-[11px] text-amber-300">⚠ ${PASSWORD_WARNING}</p>
+        ${notice}
+      </div>`
+  }
+
   const profileTab = () => {
     const s = settings()
     const choices = AVATARS.map((a) => {
@@ -95,6 +158,7 @@ export function mountSettings(): SettingsPanel {
       return `<button data-avatar="${a}" class="h-14 w-14 rounded-xl text-3xl leading-none ring-2 ${ring}">${a}</button>`
     }).join('')
     return `
+      ${accountSection()}
       <label class="mb-2 block text-xs font-black uppercase tracking-widest text-slate-300">Player Name</label>
       <input id="profile-name" type="text" maxlength="${NAME_MAX}" value="${s.playerName}" placeholder="Survivor"
         class="w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/15 outline-none focus:ring-emerald-400/60" />
@@ -216,6 +280,57 @@ export function mountSettings(): SettingsPanel {
       })
     }
 
+    const usernameField = panel.querySelector<HTMLInputElement>('#account-username')
+    const passwordField = panel.querySelector<HTMLInputElement>('#account-password')
+    usernameField?.addEventListener('input', () => {
+      authUsername = usernameField.value
+    })
+
+    const runAuth = async (action: 'login' | 'register') => {
+      if (authBusy) return
+      const username = usernameField?.value.trim() ?? ''
+      const password = passwordField?.value ?? ''
+      authBusy = true
+      authUsername = username
+      authNotice = action === 'login' ? 'Signing in…' : 'Creating account…'
+      authError = false
+      render()
+      try {
+        if (action === 'login') await login(username, password)
+        else await register(username, password)
+        authNotice = ''
+        authError = false
+        playSfx('swap')
+      } catch (error) {
+        authNotice = error instanceof Error ? error.message : 'Something went wrong.'
+        authError = true
+      } finally {
+        authBusy = false
+        render()
+      }
+    }
+
+    panel.querySelector('#account-login')?.addEventListener('click', () => void runAuth('login'))
+    panel
+      .querySelector('#account-register')
+      ?.addEventListener('click', () => void runAuth('register'))
+    passwordField?.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') void runAuth('login')
+    })
+    panel.querySelector('#account-guest')?.addEventListener('click', () => {
+      authNotice = 'Playing offline — progress is saved in this browser only.'
+      authError = false
+      render()
+      close()
+    })
+    panel.querySelector('#account-logout')?.addEventListener('click', () => {
+      void logout().then(() => {
+        authNotice = 'Logged out. This browser is back on its local save.'
+        authError = false
+        render()
+      })
+    })
+
     panel.querySelector('#data-reset')?.addEventListener('click', () => {
       resetArmed = true
       render()
@@ -329,6 +444,11 @@ export function mountSettings(): SettingsPanel {
   )
   panel.addEventListener('contextmenu', (e) => {
     if (capture) e.preventDefault()
+  })
+
+  // A session restored by Firebase arrives after mount, so redraw the tab.
+  onAccountChange(() => {
+    if (open && tab === 'profile') render()
   })
 
   return {
