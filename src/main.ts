@@ -376,7 +376,11 @@ const radar = new RadarChart(el<HTMLCanvasElement>('radar'), 280)
 
 const campaignEl = el('campaign')
 
-for (const tag of document.querySelectorAll('.menu-version')) tag.textContent = APP_VERSION
+for (const tag of document.querySelectorAll('.menu-version')) {
+  tag.textContent = APP_VERSION
+  tag.setAttribute('title', 'Made by Lautin Yu')
+  tag.classList.add('cursor-help')
+}
 
 let currentMission: Mission = MISSIONS[0]
 /** Which chapter's mission board the menu is showing. */
