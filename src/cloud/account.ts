@@ -110,7 +110,20 @@ export function pushCloudSave(): void {
   }, 1000)
 }
 
-/** Overwrites the local save with the cloud document and reloads the game. */
+/**
+ * Guards the one reload a hydration is allowed to do. `loadProfile()`
+ * normalises and back-fills fields, so a cloud document written by an older
+ * build never compares equal to the local save and would otherwise reload
+ * forever.
+ */
+function hydratedThisSession(uid: string): boolean {
+  const key = `zs-cloud-hydrated:${uid}`
+  if (window.sessionStorage.getItem(key)) return true
+  window.sessionStorage.setItem(key, '1')
+  return false
+}
+
+/** Overwrites the local save with the cloud document. */
 function applyCloudSave(save: CloudSave): void {
   window.localStorage.setItem(PROFILE_KEY, JSON.stringify(save.profile))
   if (save.settings) {
@@ -135,7 +148,7 @@ async function hydrate(uid: string, username: string): Promise<void> {
   const save = await loadCloudSave(uid)
   if (save) {
     applyCloudSave(save)
-    window.location.reload()
+    if (!hydratedThisSession(uid)) window.location.reload()
     return
   }
   // First sign-in on a fresh account: seed the cloud from what is on disk.
@@ -210,7 +223,9 @@ export async function login(username: string, password: string): Promise<Account
 
 export async function logout(): Promise<void> {
   if (!cloudAvailable()) return
+  const uid = account?.uid
   await signOut(auth())
+  if (uid) window.sessionStorage.removeItem(`zs-cloud-hydrated:${uid}`)
   account = null
   emit()
 }
@@ -248,7 +263,7 @@ export function startCloudSync(): void {
         }
         if (JSON.stringify(save.profile) === JSON.stringify(local)) return
         applyCloudSave(save)
-        window.location.reload()
+        if (!hydratedThisSession(user.uid)) window.location.reload()
       })
       .catch(() => {
         // Offline start: keep playing on the local save.
