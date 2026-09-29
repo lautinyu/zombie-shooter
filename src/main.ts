@@ -377,9 +377,13 @@ const radar = new RadarChart(el<HTMLCanvasElement>('radar'), 280)
 const campaignEl = el('campaign')
 
 for (const tag of document.querySelectorAll('.menu-version')) {
+  const above = tag.classList.contains('bottom-2')
   tag.textContent = APP_VERSION
-  tag.setAttribute('title', 'Made by Lautin Yu')
-  tag.classList.add('cursor-help')
+  tag.classList.add('version-badge')
+  const tip = document.createElement('span')
+  tip.className = above ? 'version-tip version-tip-above' : 'version-tip'
+  tip.textContent = 'Made by Lautin Yu'
+  tag.append(tip)
 }
 
 let currentMission: Mission = MISSIONS[0]
