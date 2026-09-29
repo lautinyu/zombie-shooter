@@ -137,3 +137,30 @@ textarea {
 .version-badge:focus-visible .version-tip {
   opacity: 1;
 }
+
+/* Menu toast: shown when Start Game has no mission left to launch. */
+.menu-toast {
+  position: fixed;
+  top: 1.25rem;
+  left: 50%;
+  z-index: 80;
+  transform: translate(-50%, -0.75rem);
+  max-width: min(90vw, 34rem);
+  border: 1px solid rgb(52 211 153 / 0.55);
+  border-radius: 0.75rem;
+  background: rgb(9 9 11 / 0.95);
+  padding: 0.7rem 1.1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: rgb(167 243 208);
+  box-shadow: 0 12px 30px rgb(0 0 0 / 0.6);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 140ms ease-out, transform 140ms ease-out;
+}
+
+.menu-toast.is-visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}

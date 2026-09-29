@@ -1067,6 +1067,49 @@ function startGameFlow() {
   })
 }
 
+/** The campaign mission the save is up to: first unlocked one not yet cleared. */
+function nextCampaignMission(): Mission | null {
+  return (
+    MISSIONS.find(
+      (m) => !m.ngPlus && !profile.completed.includes(m.id) && missionUnlocked(m, profile.completed),
+    ) ?? null
+  )
+}
+
+let toastTimer: number | null = null
+
+/** Transient banner over the menu; used when there is nothing left to start. */
+function showToast(text: string) {
+  let toast = document.getElementById('menu-toast')
+  if (!toast) {
+    toast = document.createElement('div')
+    toast.id = 'menu-toast'
+    toast.className = 'menu-toast'
+    document.body.appendChild(toast)
+  }
+  toast.textContent = text
+  toast.classList.add('is-visible')
+  if (toastTimer) window.clearTimeout(toastTimer)
+  toastTimer = window.setTimeout(() => toast?.classList.remove('is-visible'), 4200)
+}
+
+/**
+ * Start Game drops straight into the mission the save is up to. Survivor
+ * select still comes first the very first time, since a run needs a character.
+ */
+function startCampaignFlow() {
+  if (!profile.character) {
+    startGameFlow()
+    return
+  }
+  const next = nextCampaignMission()
+  if (!next) {
+    showToast('You finished all missions! Try New Game+ or check out the Arcade Hub!')
+    return
+  }
+  launch(next)
+}
+
 function launch(m: Mission) {
   currentMission = m
   const roster = [characterById(activeCharacter())]
@@ -1922,7 +1965,7 @@ bindCheatCodes({
   },
 })
 
-el('start-btn').addEventListener('click', startGameFlow)
+el('start-btn').addEventListener('click', startCampaignFlow)
 
 el('win-btn').addEventListener('click', () => game.toMenu())
 el('lose-menu-btn').addEventListener('click', () => game.toMenu())
