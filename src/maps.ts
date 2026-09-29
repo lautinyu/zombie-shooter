@@ -38,9 +38,9 @@ export type MapId =
   | 'refinery'
   | 'dunes'
   | 'ironhold'
-  | 'impactbasin'
-  | 'hollowspire'
-  | 'harvester'
+  | 'shiphold'
+  | 'shiplab'
+  | 'shipbridge'
 
 /** Ground texture painted under everything else. */
 export type FloorStyle =
@@ -52,6 +52,7 @@ export type FloorStyle =
   | 'snow'
   | 'jungle'
   | 'sand'
+  | 'deckplate'
 
 export interface GameMap {
   id: MapId
@@ -78,6 +79,8 @@ export interface GameMap {
   mud?: Rect[]
   /** Forced player start, used by the linear extraction valley. */
   spawn?: { x: number; y: number }
+  /** Bolted-down alien turret nests, used by the UFO interiors. */
+  emplacements?: { x: number; y: number }[]
 }
 
 const BORDER = 30
@@ -981,86 +984,132 @@ const IRONHOLD: GameMap = {
   ],
 }
 
-/** New Game+ scene 1: the glassed crater the craft burned into the flats. */
-const IMPACT_BASIN: GameMap = {
-  id: 'impactbasin',
-  name: 'The Impact Basin',
-  width: 2100,
-  height: 1700,
-  color: '#1b1430',
+/**
+ * The UFO interiors are all the same shape: two sealed rooms with a single
+ * hallway between them and the deck terminal at the far end of room two.
+ */
+const SHIP_HOLD: GameMap = {
+  id: 'shiphold',
+  name: 'Abduction Hold · Deck 4',
+  width: 2200,
+  height: 1200,
+  color: '#14102a',
   wallColor: '#6d4a9c',
-  wallEdge: '#301e52',
-  floor: 'organic',
+  wallEdge: '#2a1c4a',
+  floor: 'deckplate',
   accent: '#c084fc',
-  extraction: { x: 1900, y: 1520 },
+  spawn: { x: 260, y: 600 },
+  extraction: { x: 1960, y: 600 },
   walls: [
-    ...border(2100, 1700),
+    ...border(2200, 1200),
     ...partitions([
-      { x: 480, y: 420, w: 300, h: 80 },
-      { x: 1320, y: 420, w: 300, h: 80 },
-      { x: 480, y: 1200, w: 300, h: 80 },
-      { x: 1320, y: 1200, w: 300, h: 80 },
-      { x: 980, y: 760, w: 160, h: 160 },
+      // Bulkhead between the holding room and the hallway.
+      { x: 880, y: 30, w: 70, h: 470 },
+      { x: 880, y: 700, w: 70, h: 470 },
+      // Bulkhead between the hallway and the terminal room.
+      { x: 1250, y: 30, w: 70, h: 470 },
+      { x: 1250, y: 700, w: 70, h: 470 },
+      // Hallway rails.
+      { x: 950, y: 380, w: 300, h: 40 },
+      { x: 950, y: 780, w: 300, h: 40 },
+      // Stasis pod banks in the holding room.
+      { x: 260, y: 240, w: 120, h: 180 },
+      { x: 260, y: 780, w: 120, h: 180 },
+      { x: 600, y: 500, w: 140, h: 200 },
+      // Cargo stacks around the terminal.
+      { x: 1480, y: 260, w: 180, h: 120 },
+      { x: 1480, y: 820, w: 180, h: 120 },
+      { x: 1840, y: 260, w: 120, h: 120 },
+      { x: 1840, y: 820, w: 120, h: 120 },
     ]),
   ],
-  // Pools of the craft's coolant, thick enough to wade in.
-  mud: [
-    { x: 300, y: 760, w: 280, h: 240 },
-    { x: 1520, y: 700, w: 280, h: 260 },
+  emplacements: [
+    { x: 1100, y: 200 },
+    { x: 1100, y: 1000 },
+    { x: 1760, y: 600 },
   ],
 }
 
-/** New Game+ scene 2: the bone-white spire the drop pods grew overnight. */
-const HOLLOW_SPIRE: GameMap = {
-  id: 'hollowspire',
-  name: 'The Hollow Spire',
-  width: 1800,
-  height: 1800,
-  color: '#151a2e',
+const SHIP_LAB: GameMap = {
+  id: 'shiplab',
+  name: 'Specimen Lab · Deck 7',
+  width: 1600,
+  height: 2000,
+  color: '#0e1630',
   wallColor: '#7c5cc4',
-  wallEdge: '#2b2250',
-  floor: 'organic',
+  wallEdge: '#241c46',
+  floor: 'deckplate',
   accent: '#a78bfa',
-  extraction: { x: 1620, y: 1620 },
+  spawn: { x: 800, y: 260 },
+  extraction: { x: 800, y: 1760 },
   walls: [
-    ...border(1800, 1800),
+    ...border(1600, 2000),
     ...partitions([
-      { x: 760, y: 760, w: 280, h: 280 },
-      { x: 360, y: 360, w: 90, h: 320 },
-      { x: 1350, y: 360, w: 90, h: 320 },
-      { x: 360, y: 1120, w: 90, h: 320 },
-      { x: 1350, y: 1120, w: 90, h: 320 },
-      { x: 700, y: 300, w: 400, h: 80 },
-      { x: 700, y: 1420, w: 400, h: 80 },
+      // Lab / hallway bulkhead.
+      { x: 30, y: 700, w: 560, h: 70 },
+      { x: 1010, y: 700, w: 560, h: 70 },
+      // Hallway / vivarium bulkhead.
+      { x: 30, y: 1220, w: 560, h: 70 },
+      { x: 1010, y: 1220, w: 560, h: 70 },
+      // Hallway rails.
+      { x: 560, y: 790, w: 40, h: 410 },
+      { x: 1000, y: 790, w: 40, h: 410 },
+      // Dissection benches up top.
+      { x: 300, y: 220, w: 220, h: 90 },
+      { x: 1080, y: 220, w: 220, h: 90 },
+      { x: 640, y: 420, w: 320, h: 80 },
+      // Growth tanks around the terminal.
+      { x: 300, y: 1440, w: 140, h: 140 },
+      { x: 1160, y: 1440, w: 140, h: 140 },
+      { x: 700, y: 1880, w: 200, h: 60 },
     ]),
+  ],
+  emplacements: [
+    { x: 800, y: 980 },
+    { x: 380, y: 1700 },
+    { x: 1220, y: 1700 },
   ],
 }
 
-/** New Game+ scene 3: the harvesting field directly under the craft. */
-const HARVESTER: GameMap = {
-  id: 'harvester',
-  name: 'The Harvest Field',
+const SHIP_BRIDGE: GameMap = {
+  id: 'shipbridge',
+  name: 'Command Spine · Deck 1',
   width: 2400,
-  height: 1800,
-  color: '#101a24',
+  height: 1400,
+  color: '#0b1526',
   wallColor: '#4c7f9c',
-  wallEdge: '#1d3546',
-  floor: 'organic',
+  wallEdge: '#16304a',
+  floor: 'deckplate',
   accent: '#22d3ee',
-  extraction: { x: 2200, y: 1620 },
+  spawn: { x: 280, y: 700 },
+  extraction: { x: 2140, y: 700 },
   walls: [
-    ...border(2400, 1800),
+    ...border(2400, 1400),
     ...partitions([
-      { x: 520, y: 520, w: 200, h: 200 },
-      { x: 1660, y: 520, w: 200, h: 200 },
-      { x: 520, y: 1080, w: 200, h: 200 },
-      { x: 1660, y: 1080, w: 200, h: 200 },
-      { x: 1120, y: 820, w: 180, h: 180 },
+      // Engine room / hallway bulkhead.
+      { x: 900, y: 30, w: 70, h: 540 },
+      { x: 900, y: 830, w: 70, h: 540 },
+      // Hallway / bridge bulkhead.
+      { x: 1440, y: 30, w: 70, h: 540 },
+      { x: 1440, y: 830, w: 70, h: 540 },
+      // Hallway conduits.
+      { x: 1010, y: 430, w: 380, h: 50 },
+      { x: 1010, y: 920, w: 380, h: 50 },
+      // Reactor pillars in the engine room.
+      { x: 300, y: 300, w: 160, h: 160 },
+      { x: 300, y: 940, w: 160, h: 160 },
+      { x: 640, y: 620, w: 140, h: 160 },
+      // Console banks on the bridge.
+      { x: 1660, y: 280, w: 260, h: 100 },
+      { x: 1660, y: 1020, w: 260, h: 100 },
+      { x: 2020, y: 560, w: 80, h: 280 },
     ]),
   ],
-  mud: [
-    { x: 940, y: 300, w: 520, h: 200 },
-    { x: 940, y: 1320, w: 520, h: 200 },
+  emplacements: [
+    { x: 1200, y: 240 },
+    { x: 1200, y: 1160 },
+    { x: 1900, y: 700 },
+    { x: 500, y: 700 },
   ],
 }
 
@@ -1093,9 +1142,9 @@ export const MAPS: GameMap[] = [
   REFINERY,
   DUNES,
   IRONHOLD,
-  IMPACT_BASIN,
-  HOLLOW_SPIRE,
-  HARVESTER,
+  SHIP_HOLD,
+  SHIP_LAB,
+  SHIP_BRIDGE,
 ]
 
 /** True when the point sits inside one of the map's mud pits. */

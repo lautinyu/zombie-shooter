@@ -276,6 +276,24 @@ function colossusOutroDialogue(id: CharacterId): Line[] {
       text: 'Purple things... wings, and all those tentacles. The Colossus was never the source. Something put it here. Reload. This war just got a lot bigger.',
       side: 'left',
     },
+    {
+      speaker: 'System',
+      text: '[HARVEST BEAM ENGAGED. LOCAL GRAVITY INVERTED — BIOSIGN ACQUIRED AND ASCENDING.]',
+      side: 'system',
+      flash: true,
+      art: 'ufo',
+    },
+    {
+      speaker: hero,
+      text: 'The light has me — my boots are off the salt. I cannot break out of it, it is pulling me straight up into that thing!',
+      side: 'left',
+      art: 'ufo',
+    },
+    {
+      speaker: hero,
+      text: '*coming to* Cold deck. Purple light. Rows of pods with people still inside them. I am aboard it. Fine — if it carried me up here, it can carry me back down.',
+      side: 'left',
+    },
   ]
 }
 

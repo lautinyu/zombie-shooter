@@ -749,101 +749,94 @@ function drawNgBackground() {
     ngBg.height = h
   }
   const t = performance.now() / 1000
+  const cx = w / 2
+  const cy = h * 0.52
 
-  const sky = ctx.createLinearGradient(0, 0, 0, h)
-  sky.addColorStop(0, '#1a0733')
-  sky.addColorStop(0.55, '#2a0b3f')
-  sky.addColorStop(1, '#06030f')
-  ctx.fillStyle = sky
+  // Interior of the ship: a corridor running away from the camera, drawn as
+  // nested bulkhead rings shrinking into a lit hatch at the vanishing point.
+  const hull = ctx.createLinearGradient(0, 0, 0, h)
+  hull.addColorStop(0, '#120b26')
+  hull.addColorStop(0.5, '#1b1136')
+  hull.addColorStop(1, '#08040f')
+  ctx.fillStyle = hull
   ctx.fillRect(0, 0, w, h)
 
-  // Stars, seeded off their index so they hold still between frames.
-  for (let i = 0; i < 90; i++) {
-    const x = ((i * 9301 + 49297) % 233280) / 233280 * w
-    const y = ((i * 4271 + 13) % 99991) / 99991 * h * 0.62
-    ctx.globalAlpha = 0.25 + 0.5 * Math.abs(Math.sin(t * 0.8 + i))
-    ctx.fillStyle = '#e9d5ff'
-    ctx.fillRect(x, y, 2, 2)
-  }
-  ctx.globalAlpha = 1
-
-  const cx = w / 2
-  const cy = h * 0.3 + Math.sin(t * 0.6) * 10
-
-  // Harvest beam down onto the field.
-  const beam = ctx.createLinearGradient(cx, cy, cx, h)
-  beam.addColorStop(0, 'rgba(232,121,249,0.35)')
-  beam.addColorStop(1, 'rgba(34,211,238,0)')
-  ctx.fillStyle = beam
-  ctx.beginPath()
-  ctx.moveTo(cx - 70, cy)
-  ctx.lineTo(cx + 70, cy)
-  ctx.lineTo(cx + w * 0.3, h)
-  ctx.lineTo(cx - w * 0.3, h)
-  ctx.closePath()
-  ctx.fill()
-
-  // The craft.
-  ctx.fillStyle = '#4c1d95'
-  ctx.beginPath()
-  ctx.ellipse(cx, cy, 190, 42, 0, 0, Math.PI * 2)
-  ctx.fill()
-  ctx.fillStyle = '#7c3aed'
-  ctx.beginPath()
-  ctx.ellipse(cx, cy - 22, 96, 38, 0, Math.PI, 0)
-  ctx.fill()
-  for (let i = 0; i < 9; i++) {
-    const a = t * 1.1 + (i / 9) * Math.PI * 2
-    ctx.globalAlpha = 0.45 + 0.45 * Math.sin(a * 2)
-    ctx.fillStyle = '#22d3ee'
+  const rings = 13
+  for (let i = rings; i >= 1; i--) {
+    // Rings crawl toward the camera, so the corridor reads as moving.
+    const k = ((i + t * 0.55) % rings) / rings
+    const scale = 0.08 + k * k * 0.95
+    const rw = w * 0.62 * scale
+    const rh = h * 0.52 * scale
+    ctx.strokeStyle = `rgba(168,85,247,${0.1 + (1 - k) * 0.35})`
+    ctx.lineWidth = 2 + (1 - k) * 4
     ctx.beginPath()
-    ctx.arc(cx + Math.cos(a) * 160, cy + 16 + Math.sin(a) * 10, 5, 0, Math.PI * 2)
-    ctx.fill()
-  }
-  ctx.globalAlpha = 1
-
-  // Spires of the hollow ridge on the horizon.
-  ctx.fillStyle = '#120a22'
-  const base = h * 0.78
-  for (let i = -1; i < 9; i++) {
-    const x = (i / 8) * w + Math.sin(i * 2.3) * 30
-    const peak = base - 90 - Math.abs(Math.sin(i * 1.7)) * 150
-    ctx.beginPath()
-    ctx.moveTo(x - 90, base)
-    ctx.lineTo(x, peak)
-    ctx.lineTo(x + 90, base)
-    ctx.closePath()
-    ctx.fill()
-  }
-  ctx.fillStyle = '#0a0616'
-  ctx.fillRect(0, base, w, h - base)
-
-  // Winged tentacle things drifting across the beam.
-  for (let i = 0; i < 7; i++) {
-    const drift = (t * (16 + i * 5) + i * 260) % (w + 240)
-    const x = w + 120 - drift
-    const y = h * 0.42 + Math.sin(t * 1.4 + i) * 26 + i * 18
-    const flap = Math.sin(t * 6 + i) * 10
-    ctx.fillStyle = 'rgba(168,85,247,0.75)'
-    ctx.beginPath()
-    ctx.ellipse(x, y, 11, 7, 0, 0, Math.PI * 2)
-    ctx.fill()
-    ctx.strokeStyle = 'rgba(217,70,239,0.7)'
-    ctx.lineWidth = 3
-    ctx.beginPath()
-    ctx.moveTo(x - 10, y)
-    ctx.quadraticCurveTo(x - 26, y - 12 - flap, x - 38, y - 2)
-    ctx.moveTo(x + 10, y)
-    ctx.quadraticCurveTo(x + 26, y - 12 + flap, x + 38, y - 2)
+    ctx.roundRect(cx - rw, cy - rh, rw * 2, rh * 2, 40 * scale + 8)
     ctx.stroke()
-    ctx.strokeStyle = 'rgba(126,34,206,0.8)'
-    ctx.lineWidth = 2
-    for (let k = -1; k <= 1; k++) {
+    // Strip lighting bedded into the top and bottom of each bulkhead.
+    ctx.fillStyle = `rgba(232,121,249,${0.06 + (1 - k) * 0.18})`
+    ctx.fillRect(cx - rw * 0.55, cy - rh, rw * 1.1, 4)
+    ctx.fillRect(cx - rw * 0.55, cy + rh - 4, rw * 1.1, 4)
+  }
+
+  // Deck plating and ceiling runs converging on the hatch.
+  ctx.strokeStyle = 'rgba(192,132,252,0.18)'
+  ctx.lineWidth = 2
+  for (const edge of [-1, 1]) {
+    for (let i = 0; i <= 6; i++) {
+      const spread = (i / 6) * w * 0.55
       ctx.beginPath()
-      ctx.moveTo(x + k * 4, y + 6)
-      ctx.quadraticCurveTo(x + k * 8, y + 16 + flap, x + k * 5, y + 26)
+      ctx.moveTo(cx + edge * spread, cy + h * 0.5)
+      ctx.lineTo(cx + edge * spread * 0.1, cy)
+      ctx.moveTo(cx + edge * spread, cy - h * 0.5)
+      ctx.lineTo(cx + edge * spread * 0.1, cy)
       ctx.stroke()
     }
+  }
+
+  // The lit hatch at the far end, breathing the way the ship's lights do.
+  const pulse = 0.55 + Math.sin(t * 1.6) * 0.18
+  const glow = ctx.createRadialGradient(cx, cy, 4, cx, cy, Math.max(w, h) * 0.22)
+  glow.addColorStop(0, `rgba(240,171,252,${pulse})`)
+  glow.addColorStop(0.35, 'rgba(147,51,234,0.35)')
+  glow.addColorStop(1, 'rgba(6,3,15,0)')
+  ctx.fillStyle = glow
+  ctx.fillRect(0, 0, w, h)
+  ctx.fillStyle = `rgba(233,213,255,${pulse})`
+  ctx.beginPath()
+  ctx.roundRect(cx - w * 0.035, cy - h * 0.045, w * 0.07, h * 0.09, 8)
+  ctx.fill()
+
+  // Security drones patrolling the hallway, receding with the rings.
+  for (let i = 0; i < 5; i++) {
+    const k = ((i / 5 + t * 0.12) % 1)
+    const depth = 0.12 + k * k * 0.9
+    const x = cx + Math.sin(t * 0.7 + i * 2.1) * w * 0.22 * depth
+    const y = cy + Math.cos(t * 0.9 + i) * h * 0.14 * depth
+    const r = 4 + depth * 12
+    ctx.globalAlpha = 0.25 + depth * 0.6
+    ctx.fillStyle = '#3c2a63'
+    ctx.beginPath()
+    ctx.arc(x, y, r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#c084fc'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.fillStyle = '#f0abfc'
+    ctx.beginPath()
+    ctx.arc(x, y, r * 0.4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  }
+
+  // Haze drifting along the deck.
+  ctx.fillStyle = 'rgba(88,28,135,0.16)'
+  for (let i = 0; i < 4; i++) {
+    const y = cy + h * 0.22 + i * 26
+    const drift = ((t * (12 + i * 6) + i * 180) % (w + 320)) - 160
+    ctx.beginPath()
+    ctx.ellipse(drift, y, 180, 16, 0, 0, Math.PI * 2)
+    ctx.fill()
   }
 }
 
@@ -1498,7 +1491,12 @@ let finaleOutro = false
 // A chapter boss's burst hands over to its dialogue and credit crawl.
 game.onFinale = (boss) => {
   finaleOutro = true
-  playOutro(activeCharacter(), boss, () => game.finishFinale())
+  playOutro(activeCharacter(), boss, () => {
+    game.finishFinale()
+    // The beam ends the Rustlands aboard the ship, so the Colossus hands the
+    // player straight to the New Game+ decks rather than the chapter board.
+    if (boss === 'rust-colossus' && ngPlusUnlocked(profile)) openNgPlus()
+  })
 }
 
 game.onStateChange = (state: GameState) => {

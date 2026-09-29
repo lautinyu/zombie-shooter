@@ -112,7 +112,7 @@ interface LoadoutSlot {
   reserve: number
 }
 
-export type EnemyKind = 'zombie' | 'bug' | 'runner' | 'camo'
+export type EnemyKind = 'zombie' | 'bug' | 'runner' | 'camo' | 'drone' | 'turret' | 'guard'
 
 interface Enemy {
   kind: EnemyKind
@@ -140,6 +140,18 @@ interface Enemy {
   stun: number
   /** Seconds left of a cryo bullet's movement slow. */
   slow: number
+}
+
+/** The alien deck terminal that opens the next scene on 'ufo' missions. */
+interface Terminal {
+  x: number
+  y: number
+  r: number
+  /** 0→1 while a player stands in the interface ring. */
+  progress: number
+  breached: boolean
+  /** Drives the idle glow. */
+  pulse: number
 }
 
 /** A rooted Spore Hive hatching bugs on 'overgrowth' missions. */
@@ -422,6 +434,8 @@ interface Projectile {
   vy: number
   r: number
   life: number
+  /** Alien plasma burns instead of stinging: damage only, no infection. */
+  plasma?: boolean
 }
 
 /** A Cryo-Stalker icicle: pierces, so it tracks who it already hit. */
@@ -683,6 +697,36 @@ const MUTATIONS: Omit<Mutation, 'time'>[] = [
 ]
 const HIVE_BUG_SPAWN_CHANCE = 0.45
 const EXTRACTION_RADIUS = 70
+
+/**
+ * The UFO decks. The Colossus that bred the horde is dead, so the ship's own
+ * security — drones, bolted turrets and the guards it has already infected —
+ * does nearly all of the fighting, with only the odd stray zombie aboard.
+ */
+const UFO_TERMINAL_RADIUS = 66
+/** Seconds a player has to stand in the ring to breach a deck terminal. */
+const UFO_TERMINAL_TIME = 4
+/** Share of UFO wave spawns that are still ordinary infected. */
+const UFO_ZOMBIE_CHANCE = 0.12
+/** Share of the rest that are drones rather than infected alien guards. */
+const UFO_DRONE_CHANCE = 0.55
+/** Bodies the ship keeps in the air at once, before mission density. */
+const UFO_MAX_ALIVE = 9
+/** Seconds between security spawns, before mission density. */
+const UFO_SPAWN_INTERVAL = 2.6
+const DRONE_HP = 120
+const DRONE_SPEED = 150
+/** Range a drone or a turret will open fire from. */
+const PLASMA_RANGE = 620
+const DRONE_FIRE_INTERVAL = 2.4
+const TURRET_FIRE_INTERVAL = 1.5
+const ALIEN_TURRET_HP = 340
+const GUARD_HP = 260
+const GUARD_SPEED = 105
+const GUARD_DAMAGE = 16
+const PLASMA_SPEED = 330
+const PLASMA_DAMAGE = 11
+const PLASMA_LIFE = 3.4
 const SURVIVOR_SPEED = 54
 /** Survivors only advance while a player is close enough to escort them. */
 const ESCORT_RADIUS = 240
@@ -1050,6 +1094,8 @@ export class Game {
   private hazardClock = 0
   private hives: Hive[] = []
   private crates: Crate[] = []
+  /** The deck terminal on a UFO scene, or null anywhere else. */
+  private terminal: Terminal | null = null
   private crystals: Crystal[] = []
   private flameZones: FlameZone[] = []
   /** Set once a player stands inside the jungle extraction hatch. */
@@ -1383,6 +1429,23 @@ export class Game {
           }))
         : []
 
+    // A UFO scene is won at the deck terminal in the far room, and the ship's
+    // turrets are already bolted to the floor when the players walk in.
+    this.terminal =
+      mission.type === 'ufo'
+        ? {
+            x: this.map.extraction.x,
+            y: this.map.extraction.y,
+            r: UFO_TERMINAL_RADIUS,
+            progress: 0,
+            breached: false,
+            pulse: 0,
+          }
+        : null
+    if (mission.type === 'ufo') {
+      for (const e of this.map.emplacements ?? []) this.enemies.push(this.makeAlienTurret(e))
+    }
+
     this.players = []
     characters.slice(0, 2).forEach((c, i) => {
       const id: 1 | 2 = i === 0 ? 1 : 2
@@ -1390,7 +1453,7 @@ export class Game {
       // except on the finale, where the walk to the hive centre is the trigger
       // for the boss reveal, and the valley, which starts at the run's mouth.
       const centre =
-        mission.type === 'race' && this.map.spawn
+        (mission.type === 'race' || mission.type === 'ufo') && this.map.spawn
           ? this.map.spawn
           : { x: this.map.width / 2, y: this.map.height / 2 }
       const solo =
@@ -1793,6 +1856,7 @@ export class Game {
     this.updateHives(dt)
     this.updateCrates(dt)
     this.updateRace()
+    this.updateTerminal(dt)
     this.updateArena(dt)
     this.updateMutation(dt)
     if (this.generator) this.generator.hurt = Math.max(0, this.generator.hurt - dt)
@@ -2018,6 +2082,30 @@ export class Game {
     return p.id === 1 ? keysPressed.interactP1 : keysPressed.interactP2
   }
 
+  /**
+   * A UFO scene ends at the deck terminal in the far room: stand inside the
+   * interface ring long enough and the bulkhead to the next deck opens.
+   */
+  private updateTerminal(dt: number) {
+    const t = this.terminal
+    if (!t || t.breached) return
+    t.pulse += dt
+    const inside = this.alivePlayers.some((p) => Math.hypot(p.x - t.x, p.y - t.y) < t.r)
+    if (inside) {
+      if (t.progress === 0) {
+        this.banner = 'Alien terminal — hold position to breach'
+        this.bannerTimer = 2.5
+      }
+      t.progress = Math.min(1, t.progress + dt / UFO_TERMINAL_TIME)
+      if (t.progress >= 1) {
+        t.breached = true
+        playSfx('overdrive')
+      }
+    } else {
+      t.progress = Math.max(0, t.progress - dt * 0.4)
+    }
+  }
+
   /** The valley run ends the moment anyone stands in the escape hatch. */
   private updateRace() {
     if (this.mission?.type !== 'race' || this.raceEscaped) return
@@ -2121,6 +2209,13 @@ export class Game {
         total: 100,
       }
     }
+    if (type === 'ufo' && this.terminal) {
+      return {
+        label: 'Deck terminal breached',
+        done: Math.round(this.terminal.progress * 100),
+        total: 100,
+      }
+    }
     return null
   }
 
@@ -2189,6 +2284,11 @@ export class Game {
       // and its death rolls the chapter's closing cinematic.
       if (this.arenaBossSpawned && this.boss && this.boss.hp <= 0) {
         this.startFinaleBurst(this.boss)
+        return
+      }
+    } else if (mission.type === 'ufo') {
+      if (this.terminal?.breached) {
+        this.finish('won')
         return
       }
     } else if (mission.type === 'race') {
@@ -3669,11 +3769,11 @@ export class Game {
           if (this.isCloaked(p) || p.hurtCooldown > 0) continue
           if (Math.hypot(p.x - v.x, p.y - v.y) > p.r + v.r) continue
           // Venom is a sting: it feeds the infection meter, not just health.
-          p.stings += 1
-          this.damagePlayer(p, VENOM_DAMAGE)
+          if (!v.plasma) p.stings += 1
+          this.damagePlayer(p, v.plasma ? PLASMA_DAMAGE : VENOM_DAMAGE)
           p.hurtCooldown = 1.2
           p.safeTimer = 0
-          playSfx('sting')
+          playSfx(v.plasma ? 'turret' : 'sting')
           dead = true
           break
         }
@@ -3846,6 +3946,22 @@ export class Game {
         continue
       }
 
+      // A deck turret is bolted down: it only ever tracks and fires.
+      if (z.kind === 'turret') {
+        z.attackCooldown = Math.max(0, z.attackCooldown - dt)
+        const mark = this.nearestPlayerTo(z)
+        if (
+          mark &&
+          z.attackCooldown === 0 &&
+          Math.hypot(mark.x - z.x, mark.y - z.y) < PLASMA_RANGE &&
+          this.hasLineOfSight(z, mark)
+        ) {
+          this.firePlasma(z, mark)
+          z.attackCooldown = TURRET_FIRE_INTERVAL
+        }
+        continue
+      }
+
       const target = this.targetFor(z)
       if (!target.survivor && !target.player && !target.generator) continue
       const dx = target.x - z.x
@@ -3861,6 +3977,15 @@ export class Game {
       const step = z.speed * dt
       const wob = Math.sin(z.wobble * 4) * 0.25
       z.retreat = Math.max(0, z.retreat - dt)
+
+      // Security drones hover at plasma range rather than closing to contact.
+      if (z.kind === 'drone') {
+        if (d < 240) z.retreat = 0.4
+        if (z.attackCooldown === 0 && d < PLASMA_RANGE && this.hasLineOfSight(z, target)) {
+          this.firePlasma(z, target)
+          z.attackCooldown = DRONE_FIRE_INTERVAL
+        }
+      }
 
       // Convoy crawlers are the ranged threat: they hold off the chassis and
       // spit into the bed, so their damage lands on the players, not the rig.
@@ -3929,13 +4054,28 @@ export class Game {
           hunted.hurtCooldown = 0.25
           hunted.safeTimer = 0
         } else if (hunted) {
-          this.damagePlayer(hunted, 8 * this.damageScale)
-          z.attackCooldown = 0.7
+          this.damagePlayer(hunted, (z.kind === 'guard' ? GUARD_DAMAGE : 8) * this.damageScale)
+          z.attackCooldown = z.kind === 'guard' ? 1 : 0.7
           hunted.hurtCooldown = 0.25
           hunted.safeTimer = 0
         }
       }
     }
+  }
+
+  /** Ship security fires plasma: it burns, but it carries no infection. */
+  private firePlasma(z: Enemy, target: { x: number; y: number }) {
+    const a = Math.atan2(target.y - z.y, target.x - z.x)
+    this.venom.push({
+      x: z.x + Math.cos(a) * (z.r + 6),
+      y: z.y + Math.sin(a) * (z.r + 6),
+      vx: Math.cos(a) * PLASMA_SPEED,
+      vy: Math.sin(a) * PLASMA_SPEED,
+      r: 6,
+      life: PLASMA_LIFE,
+      plasma: true,
+    })
+    playSfx('turret')
   }
 
   /** A convoy crawler lobs a venom bolt at whoever is riding in the bed. */
@@ -4233,7 +4373,9 @@ export class Game {
     // Hold the Line ramps from a trickle to a wall of bodies by the last second.
     const holdProgress = hold && mission.holdTime ? 1 - this.holdTimer / mission.holdTime : 0
     const ramp = 1 + holdProgress * (HOLD_RAMP - 1)
-    const maxAlive = protect
+    const maxAlive = mission.type === 'ufo'
+      ? UFO_MAX_ALIVE
+      : protect
       ? 4 + mission.survivors * 2
       : boss
         ? 6
@@ -4255,14 +4397,16 @@ export class Game {
     // Dense stages keep noticeably more bodies on the floor at once.
     const density = mission.density ?? 1
     if (this.enemies.length >= Math.round(maxAlive * density)) return
-    if (!protect && !boss && !hold && !jungle) {
+    if (!protect && !boss && !hold && !jungle && mission.type !== 'ufo') {
       const remaining = mission.target - this.kills
       if (this.spawned - this.kills >= remaining + 4) return
     }
 
     this.spawnTimer -= dt
     if (this.spawnTimer > 0) return
-    this.spawnTimer = protect
+    this.spawnTimer = mission.type === 'ufo'
+      ? UFO_SPAWN_INTERVAL
+      : protect
       ? 1.5
       : boss
         ? 2.4
@@ -4290,6 +4434,12 @@ export class Game {
 
   /** Waves mix normal zombies with bugs, runners and camo stalkers. */
   private makeEnemy(spot: { x: number; y: number }, bugChance: number): Enemy {
+    // Aboard the ship it is the crew that fights: drones and infected guards,
+    // with only the occasional infected that came up in the beam with you.
+    if (this.mission?.type === 'ufo') {
+      if (Math.random() < UFO_ZOMBIE_CHANCE) return this.makeZombie(spot)
+      return Math.random() < UFO_DRONE_CHANCE ? this.makeDrone(spot) : this.makeGuard(spot)
+    }
     const roll = Math.random()
     if (roll < bugChance) return this.makeBug(spot)
     const variant = Math.random()
@@ -4371,6 +4521,84 @@ export class Game {
       aware: false,
       driftAngle: Math.random() * Math.PI * 2,
       revealed: false,
+      stun: 0,
+      slow: 0,
+    }
+  }
+
+  /** Ship security: a hovering drone that keeps its distance and shoots. */
+  private makeDrone(spot: { x: number; y: number }): Enemy {
+    return {
+      kind: 'drone',
+      x: spot.x,
+      y: spot.y,
+      r: 13,
+      hp: DRONE_HP * this.hpScale,
+      maxHp: DRONE_HP * this.hpScale,
+      speed: 0,
+      baseSpeed: DRONE_SPEED + Math.random() * 30,
+      attackCooldown: Math.random() * DRONE_FIRE_INTERVAL,
+      wobble: Math.random() * 10,
+      retreat: 0,
+      poison: 0,
+      poisonStacks: 0,
+      burn: 0,
+      vision: PLASMA_RANGE * 1.4,
+      aware: true,
+      driftAngle: Math.random() * Math.PI * 2,
+      revealed: true,
+      stun: 0,
+      slow: 0,
+    }
+  }
+
+  /** A bolted deck turret: it never moves, it just covers its room. */
+  private makeAlienTurret(spot: { x: number; y: number }): Enemy {
+    return {
+      kind: 'turret',
+      x: spot.x,
+      y: spot.y,
+      r: 18,
+      hp: ALIEN_TURRET_HP * this.hpScale,
+      maxHp: ALIEN_TURRET_HP * this.hpScale,
+      speed: 0,
+      baseSpeed: 0,
+      attackCooldown: Math.random() * TURRET_FIRE_INTERVAL,
+      wobble: Math.random() * 10,
+      retreat: 0,
+      poison: 0,
+      poisonStacks: 0,
+      burn: 0,
+      vision: PLASMA_RANGE,
+      aware: true,
+      driftAngle: 0,
+      revealed: true,
+      stun: 0,
+      slow: 0,
+    }
+  }
+
+  /** An infected alien guard: slower than a runner, far harder to put down. */
+  private makeGuard(spot: { x: number; y: number }): Enemy {
+    return {
+      kind: 'guard',
+      x: spot.x,
+      y: spot.y,
+      r: 19,
+      hp: GUARD_HP * this.hpScale,
+      maxHp: GUARD_HP * this.hpScale,
+      speed: 0,
+      baseSpeed: GUARD_SPEED + Math.random() * 20,
+      attackCooldown: 0,
+      wobble: Math.random() * 10,
+      retreat: 0,
+      poison: 0,
+      poisonStacks: 0,
+      burn: 0,
+      vision: ZOMBIE_VISION * 1.2,
+      aware: false,
+      driftAngle: Math.random() * Math.PI * 2,
+      revealed: true,
       stun: 0,
       slow: 0,
     }
@@ -4508,11 +4736,16 @@ export class Game {
     if (this.truck) this.drawTruck(this.truck)
     for (const blast of this.blasts) this.drawBlast(blast)
 
+    if (this.terminal) this.drawTerminal(this.terminal)
+
     for (const e of this.enemies) {
       if (e.kind !== 'camo' || e.revealed) this.drawGroundShadow(e.x, e.y, e.r)
       if (e.kind === 'bug') this.drawBug(e)
       else if (e.kind === 'camo') this.drawCamo(e)
       else if (e.kind === 'runner') this.drawRunner(e)
+      else if (e.kind === 'drone') this.drawDrone(e)
+      else if (e.kind === 'turret') this.drawAlienTurret(e)
+      else if (e.kind === 'guard') this.drawGuard(e)
       else this.drawZombie(e)
       if (e.stun > 0) this.drawStun(e)
     }
@@ -4837,6 +5070,29 @@ export class Game {
           ctx.beginPath()
           ctx.ellipse(x + 26, y + 32, r, r * 0.55, 0, 0, Math.PI * 2)
           ctx.fill()
+        }
+      }
+    } else if (m.floor === 'deckplate') {
+      // Alien deck: welded plates with a glowing seam running between them.
+      ctx.strokeStyle = 'rgba(192,132,252,0.18)'
+      ctx.lineWidth = 2
+      for (let y = Math.floor(y0 / 120) * 120; y < y1; y += 120) {
+        ctx.beginPath()
+        ctx.moveTo(x0, y)
+        ctx.lineTo(x1, y)
+        ctx.stroke()
+      }
+      for (let x = Math.floor(x0 / 120) * 120; x < x1; x += 120) {
+        ctx.beginPath()
+        ctx.moveTo(x, y0)
+        ctx.lineTo(x, y1)
+        ctx.stroke()
+      }
+      ctx.fillStyle = 'rgba(168,85,247,0.1)'
+      for (let y = Math.floor(y0 / 240) * 240; y < y1; y += 240) {
+        for (let x = Math.floor(x0 / 240) * 240; x < x1; x += 240) {
+          ctx.fillRect(x + 30, y + 30, 60, 6)
+          ctx.fillRect(x + 150, y + 160, 6, 60)
         }
       }
     } else if (m.floor === 'organic') {
@@ -5469,6 +5725,122 @@ export class Game {
       ctx.arc(0, 0, b.r, 0, Math.PI * 2)
       ctx.fill()
     }
+    ctx.restore()
+  }
+
+  /** The deck terminal: a lit console ringed by the interface floor plate. */
+  private drawTerminal(t: Terminal) {
+    const ctx = this.ctx
+    const glow = 0.5 + Math.sin(t.pulse * 3) * 0.2
+    ctx.save()
+    ctx.strokeStyle = t.breached ? 'rgba(74,222,128,0.9)' : `rgba(192,132,252,${glow})`
+    ctx.lineWidth = 4
+    ctx.setLineDash([16, 12])
+    ctx.beginPath()
+    ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.setLineDash([])
+
+    // Breach progress sweeps around the ring as a player holds the plate.
+    if (t.progress > 0) {
+      ctx.strokeStyle = '#4ade80'
+      ctx.lineWidth = 7
+      ctx.beginPath()
+      ctx.arc(t.x, t.y, t.r - 8, -Math.PI / 2, -Math.PI / 2 + t.progress * Math.PI * 2)
+      ctx.stroke()
+    }
+
+    ctx.fillStyle = '#2a1c4a'
+    ctx.strokeStyle = '#c084fc'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.roundRect(t.x - 26, t.y - 34, 52, 54, 6)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = t.breached ? '#4ade80' : `rgba(217,180,255,${0.6 + glow * 0.4})`
+    ctx.fillRect(t.x - 17, t.y - 26, 34, 24)
+    ctx.fillStyle = '#7e5bb5'
+    ctx.fillRect(t.x - 17, t.y + 4, 34, 6)
+    ctx.restore()
+  }
+
+  /** A hovering security drone: a lit eye slung under a spinning rotor. */
+  private drawDrone(e: Enemy) {
+    const ctx = this.ctx
+    const bob = Math.sin(e.wobble * 5) * 3
+    ctx.save()
+    ctx.translate(e.x, e.y - 10 + bob)
+    ctx.strokeStyle = 'rgba(192,132,252,0.7)'
+    ctx.lineWidth = 2
+    const spin = e.wobble * 9
+    ctx.beginPath()
+    ctx.ellipse(0, 0, e.r + 8, 4, spin, 0, Math.PI * 2)
+    ctx.stroke()
+    ctx.fillStyle = '#3c2a63'
+    ctx.strokeStyle = '#c084fc'
+    ctx.beginPath()
+    ctx.arc(0, 0, e.r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.fillStyle = e.attackCooldown < 0.4 ? '#fca5a5' : '#f0abfc'
+    ctx.beginPath()
+    ctx.arc(0, 0, e.r * 0.45, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  /** A bolted deck turret: a squat base with a swivelling plasma barrel. */
+  private drawAlienTurret(e: Enemy) {
+    const ctx = this.ctx
+    const mark = this.nearestPlayerTo(e)
+    const a = mark ? Math.atan2(mark.y - e.y, mark.x - e.x) : 0
+    ctx.save()
+    ctx.translate(e.x, e.y)
+    ctx.fillStyle = '#241a3f'
+    ctx.strokeStyle = '#8b5cf6'
+    ctx.lineWidth = 3
+    ctx.beginPath()
+    ctx.arc(0, 0, e.r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    ctx.rotate(a)
+    ctx.fillStyle = '#6d4a9c'
+    ctx.fillRect(0, -5, e.r + 16, 10)
+    ctx.fillStyle = e.attackCooldown < 0.3 ? '#fda4af' : '#e9d5ff'
+    ctx.beginPath()
+    ctx.arc(e.r + 16, 0, 4, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  /** An infected alien guard: tall, grey-violet, with a glowing visor. */
+  private drawGuard(e: Enemy) {
+    const ctx = this.ctx
+    const sway = Math.sin(e.wobble * 4) * 2
+    ctx.save()
+    ctx.translate(e.x, this.textures === 'enhanced' ? e.y - UNIT_LIFT : e.y)
+    ctx.fillStyle = '#4b3a6b'
+    ctx.strokeStyle = '#1b1130'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.ellipse(sway * 0.4, 2, e.r * 0.85, e.r, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.stroke()
+    // Long limbs, hanging forward the way the ship leaves them.
+    ctx.strokeStyle = '#6d5a91'
+    ctx.lineWidth = 5
+    ctx.beginPath()
+    ctx.moveTo(-e.r * 0.6, -2)
+    ctx.lineTo(-e.r * 1.1, e.r * 0.7 + sway)
+    ctx.moveTo(e.r * 0.6, -2)
+    ctx.lineTo(e.r * 1.1, e.r * 0.7 - sway)
+    ctx.stroke()
+    ctx.fillStyle = '#8f7ab5'
+    ctx.beginPath()
+    ctx.ellipse(0, -e.r * 0.9, e.r * 0.6, e.r * 0.55, 0, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#86efac'
+    ctx.fillRect(-e.r * 0.45, -e.r, e.r * 0.9, 4)
     ctx.restore()
   }
 
@@ -6578,6 +6950,15 @@ export class Game {
       ctx.fillRect(mx + w.x * s, my + w.y * s, Math.max(1, w.w * s), Math.max(1, w.h * s))
     }
 
+    // The deck terminal is the objective, so the radar always marks it.
+    if (this.terminal) {
+      ctx.strokeStyle = this.terminal.breached ? '#4ade80' : '#e9d5ff'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(mx + this.terminal.x * s, my + this.terminal.y * s, 6, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+
     if (this.mission?.type === 'protect') {
       ctx.strokeStyle = '#3ddc84'
       ctx.lineWidth = 2
@@ -6596,7 +6977,18 @@ export class Game {
     for (const e of this.enemies) {
       // Camo stalkers stay off the radar until they break cover.
       if (e.kind === 'camo' && !e.revealed) continue
-      ctx.fillStyle = e.kind === 'bug' ? '#ffa41b' : e.kind === 'runner' ? '#ff1e1e' : '#d62828'
+      ctx.fillStyle =
+        e.kind === 'bug'
+          ? '#ffa41b'
+          : e.kind === 'runner'
+            ? '#ff1e1e'
+            : e.kind === 'drone'
+              ? '#c084fc'
+              : e.kind === 'turret'
+                ? '#8b5cf6'
+                : e.kind === 'guard'
+                  ? '#a78bfa'
+                  : '#d62828'
       ctx.beginPath()
       ctx.arc(mx + e.x * s, my + e.y * s, e.kind === 'zombie' ? 2.5 : 2, 0, Math.PI * 2)
       ctx.fill()
