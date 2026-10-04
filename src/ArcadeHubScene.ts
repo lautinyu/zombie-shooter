@@ -60,8 +60,8 @@ const CARDS: CabinetCard[] = [
   {
     id: 'endless-horde',
     title: 'Endless Horde Survival',
-    tag: 'Arena survival · 1P',
-    blurb: 'Wide arena, endless dead. Pick an upgrade every minute, drop a mini-boss every 90s.',
+    tag: 'City survival · 1P · 4 classes',
+    blurb: 'Pick SWAT, Assassin, Technician or Marksman and hold the city block. Upgrades every minute, mini-boss every 90s.',
     ring: 'ring-emerald-500/60 hover:ring-emerald-300',
     text: 'text-emerald-300',
     glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.45)]',
