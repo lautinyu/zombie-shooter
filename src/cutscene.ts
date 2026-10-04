@@ -240,6 +240,60 @@ function colossusIntroDialogue(id: CharacterId): Line[] {
 }
 
 /** Relief, then the sky opens: the hook into whatever comes after chapter 4. */
+/** The Overseer addresses the hero directly across the bridge before the fight. */
+function overseerIntroDialogue(id: CharacterId): Line[] {
+  const hero = characterById(id).name
+  return [
+    {
+      speaker: 'The Overseer',
+      text: 'So. The specimen that would not stay in its pod. Come closer, little human. I have watched your kind far longer than you have had a name for yourselves.',
+      side: 'right',
+    },
+    {
+      speaker: 'The Overseer',
+      text: 'For millennia we observed your world from beyond your sky. We watched you build, quarrel, and spend yourselves. We were patient.',
+      side: 'right',
+    },
+    {
+      speaker: 'The Overseer',
+      text: 'The plague was the sign we waited for. Humanity is weak now, scattered and starving. The cleansing begins, and the planet passes to us.',
+      side: 'right',
+    },
+    {
+      speaker: hero,
+      text: 'You watched us for thousands of years and still missed the part where we fight back. Consoles for cover, eyes on that blink. Weapons hot!',
+      side: 'left',
+    },
+  ]
+}
+
+/** The Overseer falls and the ship's command deck goes dark around the hero. */
+function overseerOutroDialogue(id: CharacterId): Line[] {
+  const hero = characterById(id).name
+  return [
+    {
+      speaker: 'The Overseer',
+      text: 'Impossible... a millennium of patience... undone by one... specimen...',
+      side: 'right',
+    },
+    {
+      speaker: 'SHIP SYSTEMS',
+      text: 'COMMAND LINK SEVERED. OVERSEER SIGNAL LOST. SECURITY NETWORK OFFLINE.',
+      side: 'system',
+    },
+    {
+      speaker: hero,
+      text: "The drones just dropped out of the air. Their commander's gone, and the whole ship went quiet with it.",
+      side: 'left',
+    },
+    {
+      speaker: hero,
+      text: 'No more watching from the sky. This bridge is mine now. Time to figure out how to fly it home.',
+      side: 'left',
+    },
+  ]
+}
+
 function colossusOutroDialogue(id: CharacterId): Line[] {
   const hero = characterById(id).name
   return [
@@ -301,25 +355,7 @@ function bossDialogue(id: CharacterId, boss: BossKind): Line[] {
   const hero = characterById(id).name
   if (boss === 'canopy-leviathan') return leviathanIntroDialogue(id)
   if (boss === 'rust-colossus') return colossusIntroDialogue(id)
-  if (boss === 'ship-overseer') {
-    return [
-      {
-        speaker: hero,
-        text: "The bridge door's open. Whatever has been steering this ship is right in there.",
-        side: 'left',
-      },
-      {
-        speaker: 'Ship Voice',
-        text: 'SPECIMEN BREACH CONFIRMED. THE OVERSEER WILL RECLAIM ITS CARGO.',
-        side: 'right',
-      },
-      {
-        speaker: hero,
-        text: "Cargo? I'm the one taking this ship. Weapons hot!",
-        side: 'left',
-      },
-    ]
-  }
+  if (boss === 'ship-overseer') return overseerIntroDialogue(id)
   if (boss === 'runner-alpha') {
     return [
       {
@@ -829,6 +865,11 @@ export function playOutro(id: CharacterId, boss: BossKind, onDone: () => void) {
     runDialogue(id, leviathanOutroDialogue(id), true, onDone)
     return
   }
+  // The Overseer's fall hands straight back to the New Game+ deck menu.
+  if (boss === 'ship-overseer') {
+    runDialogue(id, overseerOutroDialogue(id), true, onDone)
+    return
+  }
   // The Colossus ends on the UFO reveal, then the chapter 4 crawl.
   if (boss === 'rust-colossus') {
     runDialogue(id, colossusOutroDialogue(id), true, () => playCredits('chapter4', onDone))
@@ -879,14 +920,21 @@ function playCredits(chapter: keyof typeof CREDIT_LINES, onDone: () => void) {
 
 /** Typewriter dialogue before the finale; resolves when the last line is read. */
 export function playBossDialogue(id: CharacterId, boss: BossKind, onDone: () => void) {
-  runDialogue(id, bossDialogue(id, boss), false, onDone)
+  // Aboard the ship there is no survivor camp to show behind the hero.
+  runDialogue(id, bossDialogue(id, boss), false, onDone, boss !== 'ship-overseer')
 }
 
 /**
  * Drives one typewriter dialogue. `overlay` keeps the arena visible behind a
  * dimmed panel instead of covering it with the solid cutscene background.
  */
-function runDialogue(id: CharacterId, lines: Line[], overlay: boolean, onDone: () => void) {
+function runDialogue(
+  id: CharacterId,
+  lines: Line[],
+  overlay: boolean,
+  onDone: () => void,
+  crowd = !overlay
+) {
   resumeAudio()
   playMusic('story')
   const { dialogue } = panelsReady()
@@ -894,7 +942,7 @@ function runDialogue(id: CharacterId, lines: Line[], overlay: boolean, onDone: (
     overlay ? 'bg-slate-950/60' : 'bg-slate-950/95'
   }`
   // Radio voices during the outro: no survivor sprites on screen.
-  document.getElementById('cutscene-survivor-group')?.classList.toggle('hidden', overlay)
+  document.getElementById('cutscene-survivor-group')?.classList.toggle('hidden', !crowd)
   const speakerEl = document.getElementById('cutscene-speaker')
   const textEl = document.getElementById('cutscene-text')
   const nameEl = document.getElementById('cutscene-portrait-name')

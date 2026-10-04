@@ -2381,7 +2381,8 @@ export class Game {
         if (
           this.boss.kind === 'hive-mother' ||
           this.boss.kind === 'cryo-stalker' ||
-          this.boss.kind === 'canopy-leviathan'
+          this.boss.kind === 'canopy-leviathan' ||
+          this.boss.kind === 'ship-overseer'
         ) {
           this.startFinaleBurst(this.boss)
           return
@@ -2472,6 +2473,7 @@ export class Game {
 
     const frost = boss.kind === 'cryo-stalker'
     const jungle = boss.kind === 'canopy-leviathan'
+    const alien = boss.kind === 'ship-overseer'
     if (jungle) this.flameZones = []
     for (let i = 0; i < FINALE_GIBS; i++) {
       const a = Math.random() * Math.PI * 2
@@ -2492,6 +2494,10 @@ export class Game {
             ? Math.random() < 0.55
               ? '#a3e635'
               : '#4d7c0f'
+          : alien
+            ? Math.random() < 0.55
+              ? '#e879f9'
+              : '#22d3ee'
             : Math.random() < 0.55
               ? '#5ff07a'
               : '#fb923c',
@@ -2503,7 +2509,7 @@ export class Game {
       p.swinging = false
       if (!p.down) p.gore = 1
     }
-    this.goreColor = frost ? '#7dd3fc' : jungle ? '#a3e635' : '#4ade80'
+    this.goreColor = frost ? '#7dd3fc' : jungle ? '#a3e635' : alien ? '#e879f9' : '#4ade80'
   }
 
   /** Only the debris moves while the finale burst and cinematic play. */
