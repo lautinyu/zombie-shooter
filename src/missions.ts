@@ -87,6 +87,7 @@ export type BossKind =
   | 'cryo-stalker'
   | 'canopy-leviathan'
   | 'rust-colossus'
+  | 'ship-overseer'
 
 /** Path bosses; clearing two of them opens the Hive Mother finale. */
 export const PATH_BOSS_IDS = ['quarantine-boss', 'swarm-boss', 'evac-boss']
@@ -731,7 +732,7 @@ export const MISSIONS: Mission[] = [
     unlocks: ['ng-2'],
     payout: 3,
     rewardBase: 150,
-    density: 0.6,
+    density: 1.1,
     chapter: 4,
     ngPlus: true,
   },
@@ -749,25 +750,26 @@ export const MISSIONS: Mission[] = [
     unlocks: ['ng-3'],
     payout: 3.2,
     rewardBase: 165,
-    density: 0.7,
+    density: 1.3,
     chapter: 4,
     ngPlus: true,
   },
   {
     id: 'ng-3',
-    name: 'Scene 3 · Command Spine',
+    name: 'Scene 3 · The Overseer',
     map: 'shipbridge',
-    type: 'ufo',
+    type: 'boss',
+    boss: 'ship-overseer',
     target: 0,
     survivors: 0,
     description:
-      'Past the reactor room is the spine that steers this thing. The ship knows you are aboard now, and the security deck is awake.',
-    objective: 'Fight the spine hallway and breach the command terminal.',
+      'The command spine ends in a sealed bridge, and the thing that flies this ship is waiting inside it. It knows every deck you crossed to get here.',
+    objective: 'Destroy the Overseer.',
     path: null,
     unlocks: [],
-    payout: 3.5,
-    rewardBase: 185,
-    density: 0.8,
+    payout: 4,
+    rewardBase: 260,
+    density: 1,
     chapter: 4,
     ngPlus: true,
   },

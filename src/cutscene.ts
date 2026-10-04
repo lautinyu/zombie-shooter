@@ -301,6 +301,25 @@ function bossDialogue(id: CharacterId, boss: BossKind): Line[] {
   const hero = characterById(id).name
   if (boss === 'canopy-leviathan') return leviathanIntroDialogue(id)
   if (boss === 'rust-colossus') return colossusIntroDialogue(id)
+  if (boss === 'ship-overseer') {
+    return [
+      {
+        speaker: hero,
+        text: "The bridge door's open. Whatever has been steering this ship is right in there.",
+        side: 'left',
+      },
+      {
+        speaker: 'Ship Voice',
+        text: 'SPECIMEN BREACH CONFIRMED. THE OVERSEER WILL RECLAIM ITS CARGO.',
+        side: 'right',
+      },
+      {
+        speaker: hero,
+        text: "Cargo? I'm the one taking this ship. Weapons hot!",
+        side: 'left',
+      },
+    ]
+  }
   if (boss === 'runner-alpha') {
     return [
       {

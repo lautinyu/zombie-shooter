@@ -412,6 +412,19 @@ interface Boss {
   cloakTimer: number
   cloaked: boolean
   footprints: Footprint[]
+  /** Overseer: index of the attack pattern currently running or last run. */
+  pattern: number
+  /** Overseer: seconds until the next pattern starts. */
+  patternTimer: number
+  /** Overseer: shots left in the running spiral or lance volley. */
+  volley: number
+  volleyTimer: number
+  /** Overseer: rotation of the node ring and the spiral arms. */
+  spin: number
+  /** Overseer: seconds left charging a blink, and where it will land. */
+  blinking: number
+  blinkX: number
+  blinkY: number
 }
 
 /** Chunk of the Hive Mother thrown out by her death burst. */
@@ -436,6 +449,8 @@ interface Projectile {
   life: number
   /** Alien plasma burns instead of stinging: damage only, no infection. */
   plasma?: boolean
+  /** Overrides the default venom / plasma damage. */
+  damage?: number
 }
 
 /** A Cryo-Stalker icicle: pierces, so it tracks who it already hit. */
@@ -705,15 +720,15 @@ const EXTRACTION_RADIUS = 70
  */
 const UFO_TERMINAL_RADIUS = 66
 /** Seconds a player has to stand in the ring to breach a deck terminal. */
-const UFO_TERMINAL_TIME = 4
+const UFO_TERMINAL_TIME = 6
 /** Share of UFO wave spawns that are still ordinary infected. */
 const UFO_ZOMBIE_CHANCE = 0.12
 /** Share of the rest that are drones rather than infected alien guards. */
 const UFO_DRONE_CHANCE = 0.55
 /** Bodies the ship keeps in the air at once, before mission density. */
-const UFO_MAX_ALIVE = 9
+const UFO_MAX_ALIVE = 16
 /** Seconds between security spawns, before mission density. */
-const UFO_SPAWN_INTERVAL = 2.6
+const UFO_SPAWN_INTERVAL = 1.5
 const DRONE_HP = 120
 const DRONE_SPEED = 150
 /** Range a drone or a turret will open fire from. */
@@ -727,6 +742,31 @@ const GUARD_DAMAGE = 16
 const PLASMA_SPEED = 330
 const PLASMA_DAMAGE = 11
 const PLASMA_LIFE = 3.4
+/** New Game+ crew are tougher and hit harder than anything in the Rustlands. */
+const NG_HP_SCALE = 1.45
+const NG_DAMAGE_SCALE = 1.25
+
+/**
+ * The Overseer, the intelligence that flies the ship. It hovers at range and
+ * cycles a plasma spiral, aimed lance volleys, a telegraphed blink with a
+ * plasma nova, and calls for security drones.
+ */
+const OVERSEER_MAX_HP = 24000
+const OVERSEER_RADIUS = 56
+const OVERSEER_SPEED = 90
+const OVERSEER_CONTACT_DAMAGE = 26
+const OVERSEER_BOLT_DAMAGE = 15
+const OVERSEER_BOLT_SPEED = 260
+const OVERSEER_BOLT_LIFE = 3.6
+/** Distance it tries to keep from its prey before it starts circling. */
+const OVERSEER_HOLD_RANGE = 300
+/** Seconds of breathing room between attack patterns. */
+const OVERSEER_REST = 1.8
+const OVERSEER_SPIRAL_GAP = 0.09
+const OVERSEER_BLINK_TIME = 0.9
+const OVERSEER_ENRAGE_SPEED = 1.25
+const OVERSEER_MAX_ADDS = 14
+const OVERSEER_ENRAGE_BANNER = 'THE OVERSEER OVERCLOCKS'
 const SURVIVOR_SPEED = 54
 /** Survivors only advance while a player is close enough to escort them. */
 const ESCORT_RADIUS = 240
@@ -1021,6 +1061,7 @@ const BOSS_REVEAL_LINES: Record<BossKind, string> = {
   'canopy-leviathan':
     'Break the four crystals first — it heals off them faster than we can shoot!',
   'rust-colossus': 'Eight minutes up — that thing is walking out of the salt. Do not let it reach you!',
+  'ship-overseer': "That's what flies this ship. Stay behind the consoles and watch where it blinks!",
 }
 
 export class Game {
@@ -1442,7 +1483,7 @@ export class Game {
             pulse: 0,
           }
         : null
-    if (mission.type === 'ufo') {
+    if (mission.ngPlus) {
       for (const e of this.map.emplacements ?? []) this.enemies.push(this.makeAlienTurret(e))
     }
 
@@ -1597,6 +1638,13 @@ export class Game {
         hp: COLOSSUS_MAX_HP,
         speed: COLOSSUS_SPEED,
       },
+      'ship-overseer': {
+        name: 'The Overseer',
+        title: 'Ship Intelligence',
+        r: OVERSEER_RADIUS,
+        hp: OVERSEER_MAX_HP,
+        speed: OVERSEER_SPEED,
+      },
     }
     const s = stats[kind]
     const spot = this.openSpot(
@@ -1637,6 +1685,14 @@ export class Game {
       cloakTimer: STALKER_VISIBLE_TIME,
       cloaked: false,
       footprints: [],
+      pattern: 3,
+      patternTimer: 1.5,
+      volley: 0,
+      volleyTimer: 0,
+      spin: 0,
+      blinking: 0,
+      blinkX: spot.x,
+      blinkY: spot.y,
     }
   }
 
@@ -2127,7 +2183,7 @@ export class Game {
   /** Arctic infected carry 50% more health; jungle and desert ones more. */
   private get hpScale(): number {
     const chapter = this.mission?.chapter
-    if (chapter === 4) return CH4_HP_SCALE
+    if (chapter === 4) return CH4_HP_SCALE * (this.mission?.ngPlus ? NG_HP_SCALE : 1)
     if (chapter === 3) return CH3_HP_SCALE
     return chapter === 2 ? CH2_HP_SCALE : 1
   }
@@ -2158,7 +2214,7 @@ export class Game {
   /** ...and all of them hit harder than their chapter 1 kin. */
   private get damageScale(): number {
     const chapter = this.mission?.chapter
-    if (chapter === 4) return CH4_DAMAGE_SCALE
+    if (chapter === 4) return CH4_DAMAGE_SCALE * (this.mission?.ngPlus ? NG_DAMAGE_SCALE : 1)
     if (chapter === 3) return CH3_DAMAGE_SCALE
     return chapter === 2 ? CH2_DAMAGE_SCALE : 1
   }
@@ -3158,6 +3214,13 @@ export class Game {
     b.phase = 2
     b.dashTimer = 2
     playSfx('boss-roar')
+    if (b.kind === 'ship-overseer') {
+      b.speedMult = OVERSEER_ENRAGE_SPEED
+      b.enrage = 1
+      this.shake = Math.max(this.shake, 1.4)
+      this.announce(OVERSEER_ENRAGE_BANNER)
+      return
+    }
     if (b.kind !== 'rust-colossus') return
     b.speedMult = COLOSSUS_ENRAGE_SPEED
     b.enrage = 1
@@ -3270,6 +3333,10 @@ export class Game {
     }
     if (b.kind === 'canopy-leviathan') {
       this.updateCanopyLeviathan(b, dt, prey)
+      return
+    }
+    if (b.kind === 'ship-overseer') {
+      this.updateOverseer(b, dt, prey)
       return
     }
 
@@ -3397,6 +3464,120 @@ export class Game {
     const spot = this.openSpot(b.r + 8, prey, b.r * 2, 420)
     b.x = spot.x
     b.y = spot.y
+  }
+
+  /**
+   * The Overseer holds a firing distance from its prey and cycles its attack
+   * patterns. Below half health it overclocks: quicker, denser and with less
+   * rest between patterns.
+   */
+  private updateOverseer(b: Boss, dt: number, prey: Player | null) {
+    const enraged = b.phase === 2
+    const rest = enraged ? OVERSEER_REST * 0.6 : OVERSEER_REST
+    if (enraged) b.enrage += dt
+    b.spin += dt * (enraged ? 2.6 : 1.8)
+
+    if (b.blinking > 0) {
+      b.blinking -= dt
+      if (b.blinking <= 0) {
+        b.x = b.blinkX
+        b.y = b.blinkY
+        b.lastX = b.x
+        b.lastY = b.y
+        this.fireOverseerRing(b, enraged ? 28 : 20, OVERSEER_BOLT_SPEED * 0.8)
+        this.shake = Math.max(this.shake, 0.7)
+        playSfx('explosion')
+        b.patternTimer = rest
+      }
+      return
+    }
+
+    if (prey) {
+      const d = Math.hypot(prey.x - b.x, prey.y - b.y)
+      const heading = d > OVERSEER_HOLD_RANGE ? b.angle : b.angle + (Math.PI / 2) * b.slide
+      this.walkBoss(b, heading, b.baseSpeed * b.speedMult, dt)
+    }
+    this.unstickBoss(b, dt, prey)
+
+    if (b.volley > 0) {
+      b.volleyTimer -= dt
+      if (b.volleyTimer <= 0) {
+        b.volley -= 1
+        if (b.pattern === 0) {
+          b.volleyTimer = OVERSEER_SPIRAL_GAP
+          const arms = enraged ? 4 : 3
+          for (let i = 0; i < arms; i++) {
+            this.fireOverseerBolt(b, b.spin * 2.2 + (i / arms) * Math.PI * 2, OVERSEER_BOLT_SPEED * 0.85)
+          }
+        } else {
+          b.volleyTimer = enraged ? 0.26 : 0.38
+          const fan = enraged ? 7 : 5
+          for (let i = 0; i < fan; i++) {
+            this.fireOverseerBolt(b, b.angle + (i - (fan - 1) / 2) * 0.14, OVERSEER_BOLT_SPEED * 1.25)
+          }
+          playSfx('turret')
+        }
+        if (b.volley <= 0) b.patternTimer = rest
+      }
+    } else {
+      b.patternTimer -= dt
+      if (b.patternTimer <= 0 && prey) this.startOverseerPattern(b, prey)
+    }
+
+    if (prey && b.attackCooldown === 0) {
+      const d = Math.hypot(prey.x - b.x, prey.y - b.y)
+      if (d < b.r + prey.r) {
+        this.damagePlayer(prey, OVERSEER_CONTACT_DAMAGE)
+        prey.hurtCooldown = 0.3
+        prey.safeTimer = 0
+        b.attackCooldown = 1
+      }
+    }
+  }
+
+  /** Spiral → lance volleys → blink nova → drone call, then round again. */
+  private startOverseerPattern(b: Boss, prey: Player) {
+    const enraged = b.phase === 2
+    b.pattern = (b.pattern + 1) % 4
+    if (b.pattern === 0) {
+      b.volley = enraged ? 40 : 28
+      b.volleyTimer = 0
+      playSfx('overdrive')
+    } else if (b.pattern === 1) {
+      b.volley = enraged ? 5 : 3
+      b.volleyTimer = 0.3
+    } else if (b.pattern === 2) {
+      const spot = this.openSpot(b.r + 8, prey, 170, 280)
+      b.blinkX = spot.x
+      b.blinkY = spot.y
+      b.blinking = OVERSEER_BLINK_TIME
+      playSfx('boss-dash')
+    } else {
+      const count = enraged ? 5 : 3
+      for (let i = 0; i < count; i++) {
+        if (this.enemies.length >= OVERSEER_MAX_ADDS) break
+        this.enemies.push(this.makeDrone(this.openSpot(14, b, b.r + 30, 220)))
+      }
+      playSfx('boss-roar')
+      b.patternTimer = enraged ? OVERSEER_REST * 0.6 : OVERSEER_REST
+    }
+  }
+
+  private fireOverseerBolt(b: Boss, angle: number, speed: number) {
+    this.venom.push({
+      x: b.x + Math.cos(angle) * (b.r + 8),
+      y: b.y + Math.sin(angle) * (b.r + 8),
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      r: 8,
+      life: OVERSEER_BOLT_LIFE,
+      plasma: true,
+      damage: OVERSEER_BOLT_DAMAGE,
+    })
+  }
+
+  private fireOverseerRing(b: Boss, count: number, speed: number) {
+    for (let i = 0; i < count; i++) this.fireOverseerBolt(b, (i / count) * Math.PI * 2 + b.spin, speed)
   }
 
   /**
@@ -3770,7 +3951,8 @@ export class Game {
           if (Math.hypot(p.x - v.x, p.y - v.y) > p.r + v.r) continue
           // Venom is a sting: it feeds the infection meter, not just health.
           if (!v.plasma) p.stings += 1
-          this.damagePlayer(p, v.plasma ? PLASMA_DAMAGE : VENOM_DAMAGE)
+          const ng = this.mission?.ngPlus ? NG_DAMAGE_SCALE : 1
+          this.damagePlayer(p, v.damage ?? (v.plasma ? PLASMA_DAMAGE * ng : VENOM_DAMAGE))
           p.hurtCooldown = 1.2
           p.safeTimer = 0
           playSfx(v.plasma ? 'turret' : 'sting')
@@ -4436,7 +4618,7 @@ export class Game {
   private makeEnemy(spot: { x: number; y: number }, bugChance: number): Enemy {
     // Aboard the ship it is the crew that fights: drones and infected guards,
     // with only the occasional infected that came up in the beam with you.
-    if (this.mission?.type === 'ufo') {
+    if (this.mission?.ngPlus) {
       if (Math.random() < UFO_ZOMBIE_CHANCE) return this.makeZombie(spot)
       return Math.random() < UFO_DRONE_CHANCE ? this.makeDrone(spot) : this.makeGuard(spot)
     }
@@ -5273,15 +5455,116 @@ export class Game {
     ctx.save()
     ctx.translate(v.x, this.textures === 'enhanced' ? v.y - UNIT_LIFT : v.y)
     const grad = ctx.createRadialGradient(-v.r * 0.3, -v.r * 0.3, 1, 0, 0, v.r)
-    grad.addColorStop(0, '#d9ff8a')
-    grad.addColorStop(1, '#5aa30d')
-    ctx.fillStyle = this.textures === 'enhanced' ? grad : '#8fdb2e'
+    grad.addColorStop(0, v.plasma ? '#f5d0fe' : '#d9ff8a')
+    grad.addColorStop(1, v.plasma ? '#a21caf' : '#5aa30d')
+    ctx.fillStyle = this.textures === 'enhanced' ? grad : v.plasma ? '#e879f9' : '#8fdb2e'
     ctx.beginPath()
     ctx.arc(0, 0, v.r, 0, Math.PI * 2)
     ctx.fill()
-    ctx.strokeStyle = 'rgba(30,60,0,0.8)'
+    ctx.strokeStyle = v.plasma ? 'rgba(76,5,25,0.8)' : 'rgba(30,60,0,0.8)'
     ctx.lineWidth = 1.5
     ctx.stroke()
+    ctx.restore()
+  }
+
+  /**
+   * The Overseer: a hovering carapace disc with a rotating node ring, trailing
+   * tentacles and a single eye that tracks its prey. A blink is telegraphed by
+   * a ring at the landing spot while the body fades out.
+   */
+  private drawOverseer(b: Boss) {
+    const ctx = this.ctx
+    const enraged = b.phase === 2
+    const lift = this.textures === 'enhanced' ? UNIT_LIFT * 3 : 0
+    if (b.blinking > 0) {
+      const k = 1 - b.blinking / OVERSEER_BLINK_TIME
+      ctx.save()
+      ctx.strokeStyle = `rgba(232,121,249,${0.4 + 0.5 * k})`
+      ctx.lineWidth = 3
+      ctx.setLineDash([10, 8])
+      ctx.beginPath()
+      ctx.arc(b.blinkX, b.blinkY, b.r * (1.6 - 0.6 * k), 0, Math.PI * 2)
+      ctx.stroke()
+      ctx.setLineDash([])
+      ctx.fillStyle = `rgba(217,70,239,${0.12 + 0.2 * k})`
+      ctx.beginPath()
+      ctx.arc(b.blinkX, b.blinkY, b.r, 0, Math.PI * 2)
+      ctx.fill()
+      ctx.restore()
+    }
+
+    ctx.save()
+    ctx.globalAlpha = b.blinking > 0 ? Math.max(0.15, b.blinking / OVERSEER_BLINK_TIME) : 1
+    ctx.fillStyle = 'rgba(0,0,0,0.4)'
+    ctx.beginPath()
+    ctx.ellipse(b.x, b.y + b.r * 0.6, b.r * 1.1, b.r * 0.45, 0, 0, Math.PI * 2)
+    ctx.fill()
+
+    const x = b.x
+    const y = b.y - lift - Math.sin(b.wobble * 2) * 4
+    const pulse = 1 + Math.sin(b.wobble * 4) * 0.08
+    const tint = enraged ? '244,63,94' : '168,85,247'
+    const halo = ctx.createRadialGradient(x, y, b.r * 0.5, x, y, b.r * 2 * pulse)
+    halo.addColorStop(0, `rgba(${tint},${enraged ? 0.5 : 0.35})`)
+    halo.addColorStop(1, `rgba(${tint},0)`)
+    ctx.fillStyle = halo
+    ctx.beginPath()
+    ctx.arc(x, y, b.r * 2 * pulse, 0, Math.PI * 2)
+    ctx.fill()
+
+    ctx.strokeStyle = enraged ? '#9f1239' : '#4c1d95'
+    ctx.lineWidth = 6
+    ctx.lineCap = 'round'
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2 + b.spin * 0.3
+      ctx.beginPath()
+      ctx.moveTo(x + Math.cos(a) * b.r * 0.7, y + Math.sin(a) * b.r * 0.7)
+      for (let seg = 1; seg <= 4; seg++) {
+        const reach = b.r * (0.7 + seg * 0.22)
+        const wave = Math.sin(b.wobble * 5 + i + seg) * 0.18
+        ctx.lineTo(x + Math.cos(a + wave) * reach, y + Math.sin(a + wave) * reach)
+      }
+      ctx.stroke()
+    }
+
+    ctx.fillStyle = b.hurt > 0 ? '#3b2a6b' : '#1e1b4b'
+    ctx.beginPath()
+    ctx.arc(x, y, b.r, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = enraged ? '#fb7185' : '#a78bfa'
+    ctx.lineWidth = 3
+    ctx.stroke()
+    ctx.strokeStyle = 'rgba(167,139,250,0.35)'
+    ctx.lineWidth = 2
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2
+      ctx.beginPath()
+      ctx.moveTo(x + Math.cos(a) * b.r * 0.45, y + Math.sin(a) * b.r * 0.45)
+      ctx.lineTo(x + Math.cos(a) * b.r * 0.95, y + Math.sin(a) * b.r * 0.95)
+      ctx.stroke()
+    }
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2 + b.spin
+      ctx.fillStyle = i % 2 ? '#22d3ee' : enraged ? '#f43f5e' : '#e879f9'
+      ctx.beginPath()
+      ctx.arc(x + Math.cos(a) * b.r * 1.15, y + Math.sin(a) * b.r * 1.15, 5, 0, Math.PI * 2)
+      ctx.fill()
+    }
+
+    ctx.fillStyle = b.hurt > 0 ? '#ffffff' : '#f5d0fe'
+    ctx.beginPath()
+    ctx.ellipse(x, y, b.r * 0.42, b.r * 0.3, 0, 0, Math.PI * 2)
+    ctx.fill()
+    const px = x + Math.cos(b.angle) * b.r * 0.16
+    const py = y + Math.sin(b.angle) * b.r * 0.1
+    ctx.fillStyle = enraged ? '#e11d48' : '#7e22ce'
+    ctx.beginPath()
+    ctx.arc(px, py, b.r * 0.17, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.fillStyle = '#0f0518'
+    ctx.beginPath()
+    ctx.ellipse(px, py, b.r * 0.05, b.r * 0.13, 0, 0, Math.PI * 2)
+    ctx.fill()
     ctx.restore()
   }
 
@@ -5375,6 +5658,10 @@ export class Game {
     }
     if (b.kind === 'canopy-leviathan') {
       this.drawCanopyLeviathan(b)
+      return
+    }
+    if (b.kind === 'ship-overseer') {
+      this.drawOverseer(b)
       return
     }
     const ctx = this.ctx

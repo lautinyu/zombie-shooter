@@ -163,6 +163,223 @@ interface WeaponState {
   reloading: number
 }
 
+const TAU = Math.PI * 2
+
+/** The equipped weapon, drawn in the survivor's local frame facing +x. */
+function drawGun(c: CanvasRenderingContext2D, def: WeaponDef | undefined) {
+  if (!def) return
+  if (def.melee) {
+    c.fillStyle = '#e5e7eb'
+    c.beginPath()
+    c.moveTo(12, -1.5)
+    c.lineTo(44, -0.5)
+    c.lineTo(46, 1)
+    c.lineTo(12, 1.5)
+    c.closePath()
+    c.fill()
+    c.fillStyle = '#facc15'
+    c.fillRect(10, -3.5, 2.5, 7)
+    c.fillStyle = '#7c2d12'
+    c.fillRect(3, -2, 7, 4)
+    return
+  }
+  const sniper = def.damage >= 150
+  const len = sniper ? 34 : def.magazine <= 15 ? 16 : 24
+  c.fillStyle = '#1f2937'
+  c.fillRect(6, -3.5, len, 7)
+  c.fillStyle = '#4b5563'
+  c.fillRect(8, -1, len * 0.6, 2)
+  if (sniper) {
+    c.fillStyle = '#0f172a'
+    c.fillRect(12, -6.5, 12, 3)
+    c.fillStyle = '#38bdf8'
+    c.fillRect(23, -6.5, 1.5, 3)
+  } else if (def.magazine >= 30) {
+    c.fillStyle = '#111827'
+    c.fillRect(14, 3, 4, 5)
+  }
+}
+
+/** Arms reaching from the shoulders to the grip. */
+function drawArms(c: CanvasRenderingContext2D, color: string) {
+  c.strokeStyle = color
+  c.lineWidth = 4
+  c.lineCap = 'round'
+  c.beginPath()
+  c.moveTo(1, -10)
+  c.lineTo(11, -2.5)
+  c.moveTo(1, 10)
+  c.lineTo(9, 2.5)
+  c.stroke()
+}
+
+/**
+ * A top-down Horde survivor in its local frame (facing +x). Each class has
+ * its own silhouette: SWAT plate and visor, the Assassin's hood and cape, the
+ * Technician's hard hat and pack, and the Marksman's ghillie and boonie hat.
+ */
+function drawSurvivor(c: CanvasRenderingContext2D, id: ClassId, stride: number, t: number) {
+  const step = Math.sin(stride) * 3
+  c.fillStyle = '#111827'
+  c.beginPath()
+  c.ellipse(step, -6, 5, 3.5, 0, 0, TAU)
+  c.fill()
+  c.beginPath()
+  c.ellipse(-step, 6, 5, 3.5, 0, 0, TAU)
+  c.fill()
+
+  if (id === 'swat') {
+    c.fillStyle = '#1e293b'
+    c.beginPath()
+    c.ellipse(0, 0, 9, 15, 0, 0, TAU)
+    c.fill()
+    c.fillStyle = '#1e3a8a'
+    c.fillRect(-9, -10, 16, 20)
+    c.fillStyle = '#2563eb'
+    c.fillRect(-5, -6, 9, 12)
+    c.fillStyle = '#f8fafc'
+    c.fillRect(-9, -4, 2, 8)
+    c.fillStyle = '#334155'
+    for (const side of [-1, 1]) {
+      c.beginPath()
+      c.arc(0, side * 12, 4.5, 0, TAU)
+      c.fill()
+    }
+    drawArms(c, '#1e293b')
+    c.fillStyle = '#0f172a'
+    c.beginPath()
+    c.arc(-1, 0, 7.5, 0, TAU)
+    c.fill()
+    c.strokeStyle = '#38bdf8'
+    c.lineWidth = 3
+    c.beginPath()
+    c.arc(-1, 0, 6.5, -0.9, 0.9)
+    c.stroke()
+    return
+  }
+
+  if (id === 'assassin') {
+    const sway = Math.sin(t * 4 + stride * 0.5) * 4
+    c.fillStyle = '#2e1065'
+    c.beginPath()
+    c.moveTo(-2, -12)
+    c.quadraticCurveTo(-26, sway - 4, -22, sway)
+    c.quadraticCurveTo(-26, sway + 4, -2, 12)
+    c.closePath()
+    c.fill()
+    c.strokeStyle = '#dc2626'
+    c.lineWidth = 3
+    c.lineCap = 'round'
+    c.beginPath()
+    c.moveTo(-4, 3)
+    c.quadraticCurveTo(-12, 4 + sway, -19, 7 + sway * 1.4)
+    c.stroke()
+    c.fillStyle = '#3b0764'
+    c.beginPath()
+    c.ellipse(0, 0, 8, 12, 0, 0, TAU)
+    c.fill()
+    drawArms(c, '#1e1b4b')
+    c.fillStyle = '#4c1d95'
+    c.beginPath()
+    c.arc(-1, 0, 7.5, 0, TAU)
+    c.fill()
+    c.fillStyle = '#0b0616'
+    c.beginPath()
+    c.ellipse(3.5, 0, 3.5, 4.5, 0, 0, TAU)
+    c.fill()
+    c.fillStyle = '#c084fc'
+    c.fillRect(4.5, -2.4, 1.8, 1.4)
+    c.fillRect(4.5, 1, 1.8, 1.4)
+    return
+  }
+
+  if (id === 'technician') {
+    c.fillStyle = '#475569'
+    c.fillRect(-16, -8, 9, 16)
+    c.fillStyle = '#64748b'
+    c.fillRect(-16, -2, 9, 3)
+    c.strokeStyle = '#94a3b8'
+    c.lineWidth = 1.5
+    c.beginPath()
+    c.moveTo(-13, -7)
+    c.lineTo(-21, -15)
+    c.stroke()
+    c.fillStyle = Math.sin(t * 6) > 0 ? '#22c55e' : '#14532d'
+    c.beginPath()
+    c.arc(-21, -15, 2, 0, TAU)
+    c.fill()
+    c.fillStyle = '#ea580c'
+    c.beginPath()
+    c.ellipse(0, 0, 9, 13, 0, 0, TAU)
+    c.fill()
+    c.fillStyle = '#fde047'
+    c.fillRect(-4, -13, 2.5, 26)
+    c.fillRect(2, -12, 2, 24)
+    drawArms(c, '#9a3412')
+    c.fillStyle = '#facc15'
+    c.beginPath()
+    c.arc(-1, 0, 7.5, 0, TAU)
+    c.fill()
+    c.fillStyle = '#fde047'
+    c.beginPath()
+    c.ellipse(4, 0, 4, 7, 0, -Math.PI / 2, Math.PI / 2)
+    c.fill()
+    c.strokeStyle = '#ca8a04'
+    c.lineWidth = 1.5
+    c.beginPath()
+    c.moveTo(-8, 0)
+    c.lineTo(6, 0)
+    c.stroke()
+    c.fillStyle = '#14b8a6'
+    c.fillRect(5, -4.5, 2.5, 3)
+    c.fillRect(5, 1.5, 2.5, 3)
+    return
+  }
+
+  // Marksman: shaggy ghillie wrap with a wide boonie hat.
+  const greens = ['#4d7c0f', '#365314', '#65a30d']
+  c.lineWidth = 2
+  c.lineCap = 'round'
+  for (let i = 0; i < 16; i++) {
+    const a = (i / 16) * TAU
+    const len = 3 + ((i * 37) % 5)
+    c.strokeStyle = greens[i % 3]
+    c.beginPath()
+    c.moveTo(Math.cos(a) * 8, Math.sin(a) * 11)
+    c.lineTo(Math.cos(a) * (8 + len), Math.sin(a) * (11 + len))
+    c.stroke()
+  }
+  c.fillStyle = '#3f6212'
+  c.beginPath()
+  c.ellipse(0, 0, 10, 14, 0, 0, TAU)
+  c.fill()
+  c.fillStyle = '#365314'
+  for (const [x, y] of [[-5, -7], [2, 6], [-3, 4], [4, -5]]) {
+    c.beginPath()
+    c.arc(x, y, 2.5, 0, TAU)
+    c.fill()
+  }
+  drawArms(c, '#365314')
+  c.fillStyle = '#4d5b2a'
+  c.beginPath()
+  c.arc(-1, 0, 10, 0, TAU)
+  c.fill()
+  c.fillStyle = '#3f4a22'
+  c.beginPath()
+  c.arc(-1, 0, 6.5, 0, TAU)
+  c.fill()
+  c.strokeStyle = '#1c1917'
+  c.lineWidth = 1.5
+  c.stroke()
+  c.strokeStyle = '#65a30d'
+  c.beginPath()
+  c.moveTo(-6, -4)
+  c.lineTo(-10, -9)
+  c.moveTo(-5, 5)
+  c.lineTo(-11, 7)
+  c.stroke()
+}
+
 export function formatClock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds))
   const mm = Math.floor(total / 60)
@@ -397,7 +614,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   let active = 0
   const mods = { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1 }
 
-  const player = { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0 }
+  const player = { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0, stride: 0 }
   const drone = { active: 0, cooldown: 0, x: 0, y: 0, angle: 0, orbit: 0, fireTimer: 0 }
 
   let zombies: Zombie[] = []
@@ -570,13 +787,21 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         : ''
       btn.innerHTML = `
         <div class="flex items-center justify-between">
-          <span class="text-3xl">${c.icon}</span>
+          <canvas data-role="preview" width="88" height="88" class="h-16 w-16 rounded-lg bg-slate-800/70 ring-1 ring-white/10"></canvas>
           <span class="text-[10px] font-black uppercase tracking-widest text-slate-500">[${i + 1}]</span>
         </div>
         <div class="text-lg font-black uppercase tracking-wider" style="color:${c.color}">${c.name}</div>
         <div class="text-xs text-slate-300">${c.blurb}</div>
         ${lines}${ability}
       `
+      const preview = btn.querySelector<HTMLCanvasElement>('[data-role="preview"]')?.getContext('2d')
+      if (preview) {
+        preview.translate(44, 46)
+        preview.scale(2.2, 2.2)
+        preview.rotate(-Math.PI / 2)
+        drawGun(preview, c.weapons[0])
+        drawSurvivor(preview, c.id, 0, 0)
+      }
       btn.addEventListener('click', () => chooseClass(i))
       classCards.appendChild(btn)
     })
@@ -938,6 +1163,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       const scale = Math.min(1, mag) / mag
       player.x += mx * scale * BASE_SPEED * mods.speed * dt
       player.y += my * scale * BASE_SPEED * mods.speed * dt
+      player.stride += dt * 12 * Math.min(1, mag) * mods.speed
     }
     pushOut(player, PLAYER_RADIUS)
 
@@ -1285,25 +1511,19 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       ctx.arc(0, 0, def.melee.range * 0.8, player.angle - def.melee.arc / 2, player.angle + def.melee.arc / 2)
       ctx.stroke()
     }
-    ctx.rotate(player.angle)
-    if (def?.melee) {
-      ctx.fillStyle = '#e5e7eb'
-      ctx.fillRect(8, -1.5, 34, 3)
-      ctx.fillStyle = '#7c2d12'
-      ctx.fillRect(4, -2.5, 8, 5)
-    } else {
-      ctx.fillStyle = '#1f2937'
-      const len = def && def.damage >= 150 ? 34 : def && def.magazine <= 15 ? 16 : 24
-      ctx.fillRect(6, -3.5, len, 7)
-    }
-    ctx.fillStyle = player.hurt > 0 ? '#fca5a5' : cls.color
-    ctx.beginPath()
-    ctx.arc(0, 0, PLAYER_RADIUS, 0, Math.PI * 2)
-    ctx.fill()
     ctx.fillStyle = 'rgba(0,0,0,0.35)'
     ctx.beginPath()
-    ctx.arc(-2, 0, PLAYER_RADIUS * 0.55, 0, Math.PI * 2)
+    ctx.ellipse(0, 6, PLAYER_RADIUS + 2, PLAYER_RADIUS * 0.6, 0, 0, Math.PI * 2)
     ctx.fill()
+    ctx.rotate(player.angle)
+    drawGun(ctx, def)
+    drawSurvivor(ctx, cls.id, player.stride, blink)
+    if (player.hurt > 0) {
+      ctx.fillStyle = `rgba(248,113,113,${Math.min(0.6, player.hurt * 2.4)})`
+      ctx.beginPath()
+      ctx.arc(0, 0, PLAYER_RADIUS + 1, 0, Math.PI * 2)
+      ctx.fill()
+    }
     ctx.restore()
   }
 

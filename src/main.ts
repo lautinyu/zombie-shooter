@@ -1636,6 +1636,8 @@ game.onStateChange = (state: GameState) => {
         ? `${currentMission.name} complete — the rig rolled into the depot with its plating still on.`
       : currentMission.type === 'arena'
         ? `${currentMission.name} complete — eight minutes in the salt and the Rust Colossus went down with them.`
+      : currentMission.boss === 'ship-overseer'
+        ? `${currentMission.name} complete — the Overseer is down and the bridge is yours.`
       : currentMission.type === 'boss'
         ? `${currentMission.name} complete — the Mutated Alpha Bug is dead. The hive falls silent.`
         : currentMission.type === 'protect'

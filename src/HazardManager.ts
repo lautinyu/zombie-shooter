@@ -316,7 +316,7 @@ export class HazardManager {
  */
 export function buildHazards(map: GameMap, chapter: number, missionType: string): HazardManager | null {
   // Rustlands scrap does not follow the players onto the alien decks.
-  if (chapter !== 4 || missionType === 'rail' || missionType === 'ufo') return null
+  if (chapter !== 4 || missionType === 'rail' || map.floor === 'deckplate') return null
   // The Crucible arena is the showcase: more drums and more live floor.
   return missionType === 'arena'
     ? new HazardManager(map, 4, 9, 4)

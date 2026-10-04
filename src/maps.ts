@@ -984,132 +984,179 @@ const IRONHOLD: GameMap = {
   ],
 }
 
+/** A bulkhead running down the deck at `x`, broken by a doorway at each `doors` y. */
+function bulkheadV(x: number, doors: number[], y0: number, y1: number, door = 200): Rect[] {
+  return bulkhead(doors, y0, y1, door).map(([a, b]) => ({ x, y: a, w: 60, h: b - a, kind: 'barrier' as const }))
+}
+
+/** A bulkhead running across the deck at `y`, broken by a doorway at each `doors` x. */
+function bulkheadH(y: number, doors: number[], x0: number, x1: number, door = 200): Rect[] {
+  return bulkhead(doors, x0, x1, door).map(([a, b]) => ({ x: a, y, w: b - a, h: 60, kind: 'barrier' as const }))
+}
+
+function bulkhead(doors: number[], from: number, to: number, door: number): [number, number][] {
+  const spans: [number, number][] = []
+  let cursor = from
+  for (const d of [...doors].sort((a, b) => a - b)) {
+    if (d - door / 2 > cursor) spans.push([cursor, d - door / 2])
+    cursor = d + door / 2
+  }
+  if (cursor < to) spans.push([cursor, to])
+  return spans
+}
+
 /**
- * The UFO interiors are all the same shape: two sealed rooms with a single
- * hallway between them and the deck terminal at the far end of room two.
+ * The UFO interiors are warrens of sealed rooms joined by bulkhead doorways,
+ * with the deck terminal in the far room. Every room has at least two ways in,
+ * so the security patrols can flank from more than one side.
  */
 const SHIP_HOLD: GameMap = {
   id: 'shiphold',
   name: 'Abduction Hold · Deck 4',
-  width: 2200,
-  height: 1200,
+  width: 3200,
+  height: 2000,
   color: '#14102a',
   wallColor: '#6d4a9c',
   wallEdge: '#2a1c4a',
   floor: 'deckplate',
   accent: '#c084fc',
-  spawn: { x: 260, y: 600 },
-  extraction: { x: 1960, y: 600 },
+  spawn: { x: 260, y: 500 },
+  extraction: { x: 2900, y: 1500 },
   walls: [
-    ...border(2200, 1200),
+    ...border(3200, 2000),
+    ...bulkheadV(1050, [500, 1500], 30, 1970),
+    ...bulkheadV(2150, [500, 1500], 30, 1970),
+    ...bulkheadH(970, [540, 1630, 2690], 30, 3170),
     ...partitions([
-      // Bulkhead between the holding room and the hallway.
-      { x: 880, y: 30, w: 70, h: 470 },
-      { x: 880, y: 700, w: 70, h: 470 },
-      // Bulkhead between the hallway and the terminal room.
-      { x: 1250, y: 30, w: 70, h: 470 },
-      { x: 1250, y: 700, w: 70, h: 470 },
-      // Hallway rails.
-      { x: 950, y: 380, w: 300, h: 40 },
-      { x: 950, y: 780, w: 300, h: 40 },
       // Stasis pod banks in the holding room.
-      { x: 260, y: 240, w: 120, h: 180 },
-      { x: 260, y: 780, w: 120, h: 180 },
-      { x: 600, y: 500, w: 140, h: 200 },
+      { x: 200, y: 150, w: 120, h: 150 },
+      { x: 200, y: 740, w: 120, h: 150 },
+      { x: 640, y: 380, w: 140, h: 200 },
+      // Sorting bay.
+      { x: 1350, y: 200, w: 200, h: 110 },
+      { x: 1750, y: 650, w: 200, h: 110 },
+      { x: 1450, y: 600, w: 70, h: 70 },
+      // Specimen racks.
+      { x: 2450, y: 220, w: 160, h: 160 },
+      { x: 2850, y: 600, w: 160, h: 160 },
+      // Loading dock.
+      { x: 250, y: 1300, w: 220, h: 90 },
+      { x: 650, y: 1650, w: 220, h: 90 },
+      // Coolant pillars.
+      { x: 1400, y: 1250, w: 90, h: 260 },
+      { x: 1800, y: 1600, w: 90, h: 260 },
       // Cargo stacks around the terminal.
-      { x: 1480, y: 260, w: 180, h: 120 },
-      { x: 1480, y: 820, w: 180, h: 120 },
-      { x: 1840, y: 260, w: 120, h: 120 },
-      { x: 1840, y: 820, w: 120, h: 120 },
+      { x: 2400, y: 1200, w: 160, h: 110 },
+      { x: 2400, y: 1750, w: 160, h: 110 },
+      { x: 3000, y: 1150, w: 100, h: 100 },
     ]),
   ],
   emplacements: [
-    { x: 1100, y: 200 },
-    { x: 1100, y: 1000 },
-    { x: 1760, y: 600 },
+    { x: 1600, y: 450 },
+    { x: 2900, y: 250 },
+    { x: 540, y: 1500 },
+    { x: 1630, y: 1500 },
+    { x: 2620, y: 1500 },
+    { x: 2690, y: 760 },
   ],
 }
 
 const SHIP_LAB: GameMap = {
   id: 'shiplab',
   name: 'Specimen Lab · Deck 7',
-  width: 1600,
-  height: 2000,
+  width: 2400,
+  height: 3000,
   color: '#0e1630',
   wallColor: '#7c5cc4',
   wallEdge: '#241c46',
   floor: 'deckplate',
   accent: '#a78bfa',
-  spawn: { x: 800, y: 260 },
-  extraction: { x: 800, y: 1760 },
+  spawn: { x: 1200, y: 250 },
+  extraction: { x: 1200, y: 2750 },
   walls: [
-    ...border(1600, 2000),
+    ...border(2400, 3000),
+    ...bulkheadV(800, [520, 1530, 2510], 30, 2970),
+    ...bulkheadV(1600, [520, 1530, 2510], 30, 2970),
+    // The upper lab has no straight drop down: you go round through a wing.
+    ...bulkheadH(1000, [415, 2015], 30, 2370),
+    ...bulkheadH(2000, [415, 1230, 2015], 30, 2370),
     ...partitions([
-      // Lab / hallway bulkhead.
-      { x: 30, y: 700, w: 560, h: 70 },
-      { x: 1010, y: 700, w: 560, h: 70 },
-      // Hallway / vivarium bulkhead.
-      { x: 30, y: 1220, w: 560, h: 70 },
-      { x: 1010, y: 1220, w: 560, h: 70 },
-      // Hallway rails.
-      { x: 560, y: 790, w: 40, h: 410 },
-      { x: 1000, y: 790, w: 40, h: 410 },
-      // Dissection benches up top.
-      { x: 300, y: 220, w: 220, h: 90 },
-      { x: 1080, y: 220, w: 220, h: 90 },
-      { x: 640, y: 420, w: 320, h: 80 },
-      // Growth tanks around the terminal.
-      { x: 300, y: 1440, w: 140, h: 140 },
-      { x: 1160, y: 1440, w: 140, h: 140 },
-      { x: 700, y: 1880, w: 200, h: 60 },
+      { x: 250, y: 250, w: 200, h: 90 },
+      { x: 300, y: 700, w: 90, h: 160 },
+      // Dissection benches.
+      { x: 950, y: 500, w: 220, h: 90 },
+      { x: 1300, y: 500, w: 220, h: 90 },
+      { x: 1900, y: 250, w: 220, h: 90 },
+      { x: 2050, y: 650, w: 90, h: 160 },
+      // Growth tanks.
+      { x: 300, y: 1300, w: 140, h: 140 },
+      { x: 500, y: 1700, w: 140, h: 140 },
+      { x: 1150, y: 1450, w: 160, h: 160 },
+      { x: 1850, y: 1300, w: 140, h: 140 },
+      { x: 2100, y: 1700, w: 140, h: 140 },
+      { x: 250, y: 2300, w: 200, h: 90 },
+      { x: 400, y: 2700, w: 200, h: 90 },
+      { x: 950, y: 2300, w: 140, h: 140 },
+      { x: 1370, y: 2300, w: 140, h: 140 },
+      { x: 1900, y: 2300, w: 200, h: 90 },
+      { x: 1950, y: 2700, w: 200, h: 90 },
     ]),
   ],
   emplacements: [
-    { x: 800, y: 980 },
-    { x: 380, y: 1700 },
-    { x: 1220, y: 1700 },
+    { x: 415, y: 520 },
+    { x: 2015, y: 520 },
+    { x: 1230, y: 1250 },
+    { x: 415, y: 2510 },
+    { x: 2015, y: 2510 },
+    { x: 1230, y: 2560 },
   ],
 }
 
+/**
+ * The final deck: an outer ring of service corridors around the sealed bridge
+ * chamber where the ship's Overseer waits. Four wide doorways let the fight
+ * spill back out into the ring.
+ */
 const SHIP_BRIDGE: GameMap = {
   id: 'shipbridge',
   name: 'Command Spine · Deck 1',
-  width: 2400,
-  height: 1400,
+  width: 3000,
+  height: 2200,
   color: '#0b1526',
   wallColor: '#4c7f9c',
   wallEdge: '#16304a',
   floor: 'deckplate',
   accent: '#22d3ee',
-  spawn: { x: 280, y: 700 },
-  extraction: { x: 2140, y: 700 },
+  extraction: { x: 1500, y: 1100 },
   walls: [
-    ...border(2400, 1400),
+    ...border(3000, 2200),
+    ...bulkheadH(500, [1500], 900, 2100, 320),
+    ...bulkheadH(1640, [1500], 900, 2100, 320),
+    ...bulkheadV(900, [1100], 500, 1700, 320),
+    ...bulkheadV(2040, [1100], 500, 1700, 320),
     ...partitions([
-      // Engine room / hallway bulkhead.
-      { x: 900, y: 30, w: 70, h: 540 },
-      { x: 900, y: 830, w: 70, h: 540 },
-      // Hallway / bridge bulkhead.
-      { x: 1440, y: 30, w: 70, h: 540 },
-      { x: 1440, y: 830, w: 70, h: 540 },
-      // Hallway conduits.
-      { x: 1010, y: 430, w: 380, h: 50 },
-      { x: 1010, y: 920, w: 380, h: 50 },
-      // Reactor pillars in the engine room.
-      { x: 300, y: 300, w: 160, h: 160 },
-      { x: 300, y: 940, w: 160, h: 160 },
-      { x: 640, y: 620, w: 140, h: 160 },
-      // Console banks on the bridge.
-      { x: 1660, y: 280, w: 260, h: 100 },
-      { x: 1660, y: 1020, w: 260, h: 100 },
-      { x: 2020, y: 560, w: 80, h: 280 },
+      // Console banks inside the bridge.
+      { x: 1130, y: 760, w: 130, h: 60 },
+      { x: 1740, y: 760, w: 130, h: 60 },
+      { x: 1130, y: 1380, w: 130, h: 60 },
+      { x: 1740, y: 1380, w: 130, h: 60 },
+      // Reactor cores in the ring corners.
+      { x: 280, y: 280, w: 180, h: 180 },
+      { x: 2540, y: 280, w: 180, h: 180 },
+      { x: 280, y: 1740, w: 180, h: 180 },
+      { x: 2540, y: 1740, w: 180, h: 180 },
+      // Ring conduits.
+      { x: 520, y: 1000, w: 70, h: 200 },
+      { x: 2410, y: 1000, w: 70, h: 200 },
+      { x: 1400, y: 220, w: 200, h: 60 },
+      { x: 1400, y: 1920, w: 200, h: 60 },
     ]),
   ],
   emplacements: [
-    { x: 1200, y: 240 },
-    { x: 1200, y: 1160 },
-    { x: 1900, y: 700 },
-    { x: 500, y: 700 },
+    { x: 700, y: 250 },
+    { x: 2300, y: 250 },
+    { x: 700, y: 1950 },
+    { x: 2300, y: 1950 },
   ],
 }
 
