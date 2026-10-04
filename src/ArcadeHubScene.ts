@@ -7,6 +7,7 @@
 import { playSfx, resumeAudio } from './audio'
 import type { ArcadeGameId } from './arcadeStats'
 import { gamesPlayed, highScore, readGauntletStats } from './arcadeStats'
+import { formatClock } from './EndlessHorde'
 
 interface CabinetCard {
   id: ArcadeGameId
@@ -56,6 +57,15 @@ const CARDS: CabinetCard[] = [
     text: 'text-lime-300',
     glow: 'hover:shadow-[0_0_40px_rgba(132,204,22,0.45)]',
   },
+  {
+    id: 'endless-horde',
+    title: 'Endless Horde Survival',
+    tag: 'Arena survival · 1P',
+    blurb: 'Wide arena, endless dead. Pick an upgrade every minute, drop a mini-boss every 90s.',
+    ring: 'ring-emerald-500/60 hover:ring-emerald-300',
+    text: 'text-emerald-300',
+    glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.45)]',
+  },
 ]
 
 export interface ArcadeHub {
@@ -91,7 +101,7 @@ export function mountArcadeHub(
       </div>
       <button id="arcade-hub-back" class="rounded-lg bg-cyan-500/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-200 ring-1 ring-cyan-400/60 hover:bg-cyan-500/30">← Back to Main Menu</button>
     </div>
-    <div id="arcade-hub-cards" class="grid gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-4"></div>
+    <div id="arcade-hub-cards" class="grid gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-3"></div>
   `
 
   overlay.appendChild(shell)
@@ -109,6 +119,12 @@ export function mountArcadeHub(
       return `
         <div class="flex justify-between"><span class="text-slate-500">Best run</span><span class="${card.text}">${stats.maxDistance} m</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Zombies killed</span><span class="${card.text}">${stats.zombiesKilled}</span></div>
+        <div class="flex justify-between"><span class="text-slate-500">Games played</span><span class="${card.text}">${plays}</span></div>
+      `
+    }
+    if (card.id === 'endless-horde') {
+      return `
+        <div class="flex justify-between"><span class="text-slate-500">Best time</span><span class="${card.text}">${formatClock(highScore(card.id))}</span></div>
         <div class="flex justify-between"><span class="text-slate-500">Games played</span><span class="${card.text}">${plays}</span></div>
       `
     }

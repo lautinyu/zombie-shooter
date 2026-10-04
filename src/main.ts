@@ -1,4 +1,5 @@
 import './style.css'
+import { inject } from '@vercel/analytics'
 import { Game } from './game'
 import type { GameState, Hud } from './game'
 import {
@@ -46,12 +47,15 @@ import { CHEAT_CURRENCY, bindCheatCodes } from './cheats'
 import { mountArcade } from './arcade'
 import { mountVoidBlast } from './voidblast'
 import { mountEndlessGauntlet } from './EndlessGauntlet'
+import { mountEndlessHorde } from './EndlessHorde'
 import { mountFightingArcade } from './FightingArcade'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
 import { onSettingsChange, settings } from './settings'
 import { startCloudSync } from './cloud/account'
 import type { ArcadeGameId } from './arcadeStats'
+
+inject()
 
 declare global {
   interface Window {
@@ -1474,12 +1478,18 @@ const arcade = mountArcade(leaveCabinet)
 const voidBlast = mountVoidBlast(leaveCabinet)
 const gauntlet = mountEndlessGauntlet(leaveCabinet)
 const rotFighter = mountFightingArcade(leaveCabinet)
+const horde = mountEndlessHorde(leaveCabinet, () => {
+  cameFromHub = false
+  backToMenu()
+  playMusic('menu')
+})
 
 const CABINETS: Record<ArcadeGameId, () => void> = {
   'crimson-highway': () => arcade.open(),
   'void-blast': () => voidBlast.open(),
   'endless-gauntlet': () => gauntlet.open(),
   'rot-fighter': () => rotFighter.open(),
+  'endless-horde': () => horde.open(),
 }
 
 const arcadeHub = mountArcadeHub(

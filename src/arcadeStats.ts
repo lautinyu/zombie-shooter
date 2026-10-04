@@ -8,6 +8,7 @@ export type ArcadeGameId =
   | 'void-blast'
   | 'endless-gauntlet'
   | 'rot-fighter'
+  | 'endless-horde'
 
 /** High score keys predate this module, so their names are kept as-is. */
 const HIGH_SCORE_KEYS: Record<ArcadeGameId, string> = {
@@ -15,6 +16,7 @@ const HIGH_SCORE_KEYS: Record<ArcadeGameId, string> = {
   'void-blast': 'void-blast-highscore-v1',
   'endless-gauntlet': 'endless-gauntlet-highscore-v1',
   'rot-fighter': 'rot-fighter-highscore-v1',
+  'endless-horde': 'endless-horde-best-seconds-v1',
 }
 
 const PLAY_COUNT_KEYS: Record<ArcadeGameId, string> = {
@@ -22,6 +24,7 @@ const PLAY_COUNT_KEYS: Record<ArcadeGameId, string> = {
   'void-blast': 'void-blast-plays-v1',
   'endless-gauntlet': 'endless-gauntlet-plays-v1',
   'rot-fighter': 'rot-fighter-plays-v1',
+  'endless-horde': 'endless-horde-plays-v1',
 }
 
 export const GAUNTLET_STATS_KEY = 'ZOMBIE_ARCADE_GAUNTLET_STATS'
