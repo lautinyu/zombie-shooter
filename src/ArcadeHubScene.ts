@@ -8,6 +8,8 @@ import { playSfx, resumeAudio } from './audio'
 import type { ArcadeGameId } from './arcadeStats'
 import { gamesPlayed, highScore, readGauntletStats } from './arcadeStats'
 import { formatClock } from './EndlessHorde'
+import { currentAccount } from './cloud/account'
+import { type LeaderboardEntry, leaderboardAvailable, topHordeRuns } from './cloud/leaderboard'
 
 interface CabinetCard {
   id: ArcadeGameId
@@ -61,7 +63,7 @@ const CARDS: CabinetCard[] = [
     id: 'endless-horde',
     title: 'Endless Horde Survival',
     tag: 'City survival · 1P · 4 classes',
-    blurb: 'Pick SWAT, Assassin, Technician or Marksman and hold the city block. Upgrades every minute, mini-boss every 90s.',
+    blurb: 'Pick SWAT, Assassin, Technician or Marksman and hold the city block. Perk draft every 3 waves, mini-boss every 90s.',
     ring: 'ring-emerald-500/60 hover:ring-emerald-300',
     text: 'text-emerald-300',
     glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.45)]',
@@ -99,9 +101,30 @@ export function mountArcadeHub(
         <h2 class="text-3xl font-black uppercase tracking-[0.3em] text-cyan-300 drop-shadow-[0_0_14px_rgba(34,211,238,0.9)]">Arcade Hub</h2>
         <p class="pt-1 text-[11px] uppercase tracking-[0.35em] text-slate-500">Insert coin · select cabinet</p>
       </div>
-      <button id="arcade-hub-back" class="rounded-lg bg-cyan-500/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-200 ring-1 ring-cyan-400/60 hover:bg-cyan-500/30">← Back to Main Menu</button>
+      <div class="flex flex-wrap justify-end gap-2">
+        <button id="arcade-hub-board" class="rounded-lg bg-amber-500/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-amber-200 ring-1 ring-amber-400/60 hover:bg-amber-500/30">🏆 Leaderboard</button>
+        <button id="arcade-hub-back" class="rounded-lg bg-cyan-500/15 px-4 py-2 text-xs font-black uppercase tracking-widest text-cyan-200 ring-1 ring-cyan-400/60 hover:bg-cyan-500/30">← Back to Main Menu</button>
+      </div>
     </div>
     <div id="arcade-hub-cards" class="grid gap-4 pt-6 sm:grid-cols-2 lg:grid-cols-3"></div>
+    <div id="arcade-hub-leaderboard" class="hidden pt-6">
+      <div class="flex items-baseline justify-between gap-3">
+        <div>
+          <div class="text-sm font-black uppercase tracking-[0.25em] text-amber-300">Global Leaderboard</div>
+          <div class="pt-1 text-[10px] uppercase tracking-[0.25em] text-slate-500">Endless Horde Survival · top waves, then kills</div>
+        </div>
+        <button id="arcade-hub-board-refresh" class="rounded-md bg-white/10 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200 ring-1 ring-white/20 hover:bg-white/20">Refresh</button>
+      </div>
+      <div class="mt-3 overflow-x-auto rounded-xl bg-black/50 ring-1 ring-amber-500/30">
+        <table class="w-full text-left text-xs">
+          <thead class="text-[10px] uppercase tracking-widest text-slate-500">
+            <tr><th class="px-3 py-2">#</th><th class="px-3 py-2">Player</th><th class="px-3 py-2">Class</th><th class="px-3 py-2 text-right">Wave</th><th class="px-3 py-2 text-right">Kills</th><th class="px-3 py-2 text-right">Time</th></tr>
+          </thead>
+          <tbody id="arcade-hub-board-rows" class="font-semibold text-slate-200"></tbody>
+        </table>
+      </div>
+      <div id="arcade-hub-board-note" class="pt-2 text-center text-[10px] uppercase tracking-[0.25em] text-slate-500"></div>
+    </div>
   `
 
   overlay.appendChild(shell)
@@ -110,7 +133,15 @@ export function mountArcadeHub(
   const cardHost = shell.querySelector<HTMLDivElement>('#arcade-hub-cards')
   if (!cardHost) throw new Error('arcade hub cards host missing')
 
+  const boardPanel = shell.querySelector<HTMLDivElement>('#arcade-hub-leaderboard')
+  const boardRows = shell.querySelector<HTMLTableSectionElement>('#arcade-hub-board-rows')
+  const boardNote = shell.querySelector<HTMLDivElement>('#arcade-hub-board-note')
+  const boardButton = shell.querySelector<HTMLButtonElement>('#arcade-hub-board')
+  if (!boardPanel || !boardRows || !boardNote || !boardButton) throw new Error('arcade hub leaderboard missing')
+
   let open = false
+  let boardOpen = false
+  let boardRequest = 0
 
   const statLine = (card: CabinetCard): string => {
     const plays = gamesPlayed(card.id)
@@ -159,6 +190,67 @@ export function mountArcadeHub(
     }
   }
 
+  const messageRow = (text: string) => {
+    boardRows.innerHTML = ''
+    const row = document.createElement('tr')
+    const cell = document.createElement('td')
+    cell.colSpan = 6
+    cell.className = 'px-3 py-6 text-center text-[11px] uppercase tracking-widest text-slate-500'
+    cell.textContent = text
+    row.appendChild(cell)
+    boardRows.appendChild(row)
+  }
+
+  const renderBoard = (entries: LeaderboardEntry[]) => {
+    if (!entries.length) {
+      messageRow('No runs posted yet. Be the first!')
+      return
+    }
+    const me = currentAccount()?.username.toLowerCase()
+    boardRows.innerHTML = ''
+    entries.forEach((entry, i) => {
+      const row = document.createElement('tr')
+      const mine = entry.username.toLowerCase() === me
+      row.className = `border-t border-white/5 ${mine ? 'bg-amber-500/10 text-amber-200' : ''}`
+      const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `${i + 1}`
+      const cells = [medal, entry.username, entry.className, `${entry.waves}`, `${entry.kills}`, formatClock(entry.seconds)]
+      cells.forEach((text, c) => {
+        const cell = document.createElement('td')
+        cell.className = `px-3 py-1.5 ${c >= 3 ? 'text-right font-mono' : ''}`
+        cell.textContent = text
+        row.appendChild(cell)
+      })
+      boardRows.appendChild(row)
+    })
+  }
+
+  const loadBoard = () => {
+    boardNote.textContent = currentAccount()
+      ? 'Your best Endless Horde run posts automatically when you fall.'
+      : 'Log in from Settings → Profile to post your runs.'
+    if (!leaderboardAvailable()) {
+      messageRow('Leaderboard needs cloud saves, which are off on this build.')
+      return
+    }
+    messageRow('Loading…')
+    const request = ++boardRequest
+    topHordeRuns(10)
+      .then((entries) => {
+        if (request === boardRequest) renderBoard(entries)
+      })
+      .catch(() => {
+        if (request === boardRequest) messageRow("Couldn't reach the leaderboard. Try again shortly.")
+      })
+  }
+
+  const setBoardOpen = (next: boolean) => {
+    boardOpen = next
+    boardPanel.classList.toggle('hidden', !next)
+    cardHost.classList.toggle('hidden', next)
+    boardButton.textContent = next ? '🕹 Cabinets' : '🏆 Leaderboard'
+    if (next) loadBoard()
+  }
+
   const hide = () => {
     open = false
     overlay.classList.add('hidden')
@@ -180,6 +272,11 @@ export function mountArcadeHub(
   }
 
   shell.querySelector<HTMLButtonElement>('#arcade-hub-back')?.addEventListener('click', () => close())
+  boardButton.addEventListener('click', () => {
+    playSfx('swap')
+    setBoardOpen(!boardOpen)
+  })
+  shell.querySelector<HTMLButtonElement>('#arcade-hub-board-refresh')?.addEventListener('click', () => loadBoard())
   window.addEventListener('keydown', onKeyDown, true)
 
   return {
@@ -189,6 +286,7 @@ export function mountArcadeHub(
       resumeAudio()
       // Scores may have changed in a cabinet since the hub was last shown.
       renderCards()
+      setBoardOpen(false)
       overlay.classList.remove('hidden')
       overlay.classList.add('flex')
     },

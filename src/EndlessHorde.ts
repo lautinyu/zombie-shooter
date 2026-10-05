@@ -1,7 +1,7 @@
 /**
  * ENDLESS HORDE SURVIVAL — a standalone arcade cabinet: pick a class, then hold
- * a city block against a horde that never stops. Spawns ramp every 30 s, an
- * upgrade draft opens every 60 s and a mini-boss joins the wave every 90 s.
+ * a city block against a horde that never stops. Every 30 s a new wave ramps
+ * the spawns, a perk draft opens every 3 waves and a mini-boss joins every 90 s.
  *
  * Like the other cabinets it owns its overlay, canvas, loop, input and storage,
  * so campaign state is never touched. Player aim is fully manual (mouse, Q/E,
@@ -10,6 +10,7 @@
 
 import { playMusic, playSfx, stopMusic } from './audio'
 import { highScore, recordPlay, submitScore } from './arcadeStats'
+import { submitHordeRun } from './cloud/leaderboard'
 
 const VIEW_W = 960
 const VIEW_H = 560
@@ -27,7 +28,8 @@ const MIN_SPAWN_INTERVAL = 0.11
 const SPAWN_STEP_SECONDS = 30
 /** Each 30 s step adds this much to the spawn rate multiplier. */
 const SPAWN_RATE_STEP = 0.22
-const UPGRADE_SECONDS = 60
+const WAVES_PER_DRAFT = 3
+const UPGRADE_SECONDS = SPAWN_STEP_SECONDS * WAVES_PER_DRAFT
 const MINIBOSS_SECONDS = 90
 const MAX_ZOMBIES = 170
 
@@ -76,7 +78,18 @@ const SNIPER: WeaponDef = { name: 'Sniper Rifle', damage: 190, fireInterval: 1.0
 const GLOCK: WeaponDef = { name: 'Glock', damage: 32, fireInterval: 0.28, magazine: 15, reload: 1.2, bulletSpeed: 1000, spread: 0.03, pierce: 0 }
 /** Slightly below the Uzi's damage, at the assault rifle's cadence. */
 const DRONE_DAMAGE = 13
-const DRONE_FIRE_INTERVAL = AR.fireInterval
+/** The drone fires 5% slower than the AR so it never outshoots a primary. */
+const DRONE_FIRE_RATE = 0.95
+const DRONE_FIRE_INTERVAL = AR.fireInterval / DRONE_FIRE_RATE
+const HEAVY_SHAKE = new Map<WeaponDef, number>([
+  [SNIPER, 9],
+  [REVOLVER, 5],
+])
+const CRIT_MULT = 2
+const MAX_CRIT = 0.6
+const MAX_ARMOR = 0.5
+const POP_LIFE = 0.7
+const MARKER_LIFE = 0.18
 
 const CLASSES: ClassDef[] = [
   { id: 'swat', name: 'SWAT', icon: '🛡️', color: '#3b82f6', ring: 'ring-sky-500/60 hover:ring-sky-300', blurb: 'Steady all-rounder.', weapons: [AR, REVOLVER], drone: false },
@@ -155,6 +168,17 @@ interface Upgrade {
   title: string
   desc: () => string
   apply: () => void
+  /** Cards that would do nothing for this class or are capped stay out of the draft. */
+  available?: () => boolean
+}
+
+/** Floating damage number with a red hit-marker cross at the impact point. */
+interface Pop {
+  x: number
+  y: number
+  amount: number
+  life: number
+  crit: boolean
 }
 
 interface WeaponState {
@@ -485,7 +509,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       </div>
       <div id="horde-time" class="font-mono text-2xl font-black text-white sm:text-3xl">00:00</div>
       <div class="mt-1 flex items-center justify-between text-[11px] text-slate-400">
-        <span>Next upgrade</span><span id="horde-upgrade-in" class="font-mono"></span>
+        <span>Next perk draft</span><span id="horde-upgrade-in" class="font-mono"></span>
       </div>
       <div class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
         <div id="horde-upgrade-bar" class="h-full w-0 rounded-full bg-emerald-500"></div>
@@ -519,7 +543,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   upgradePanel.className = 'absolute inset-3 hidden flex-col items-center justify-center gap-3 rounded-lg bg-black/80 p-4 text-center'
   upgradePanel.innerHTML = `
     <div id="horde-upgrade-minute" class="text-xs font-black uppercase tracking-[0.4em] text-emerald-300"></div>
-    <div class="text-2xl font-black uppercase tracking-widest text-white">Pick one upgrade</div>
+    <div class="text-2xl font-black uppercase tracking-widest text-white">Pick one perk</div>
     <div id="horde-upgrade-cards" class="grid w-full max-w-[780px] gap-3 sm:grid-cols-3"></div>
     <div class="text-[11px] uppercase tracking-widest text-slate-400">Press 1 · 2 · 3 or click a card</div>
   `
@@ -540,6 +564,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       </div>
     </div>
     <div id="horde-over-best" class="text-xs font-bold uppercase tracking-[0.3em] text-amber-300"></div>
+    <div id="horde-over-board" class="text-[11px] font-semibold uppercase tracking-[0.25em] text-cyan-300"></div>
     <div class="flex flex-wrap justify-center gap-3 pt-3">
       <button id="horde-retry" class="rounded-lg bg-emerald-500 px-8 py-2.5 text-sm font-black uppercase tracking-widest text-black hover:bg-emerald-400">Retry</button>
       <button id="horde-change" class="rounded-lg bg-white/10 px-6 py-2.5 text-sm font-black uppercase tracking-widest text-slate-100 ring-1 ring-white/30 hover:bg-white/20">Change Class</button>
@@ -571,6 +596,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   const overTime = el<HTMLDivElement>('#horde-over-time')
   const overKills = el<HTMLDivElement>('#horde-over-kills')
   const overBest = el<HTMLDivElement>('#horde-over-best')
+  const overBoard = el<HTMLDivElement>('#horde-over-board')
   const hudDot = el<HTMLSpanElement>('#horde-dot')
   const hudClass = el<HTMLSpanElement>('#horde-class')
   const hudHp = el<HTMLSpanElement>('#horde-hp')
@@ -612,7 +638,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   let cls: ClassDef = CLASSES[0]
   let weapons: WeaponState[] = []
   let active = 0
-  const mods = { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1 }
+  const BASE_MODS = { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1, crit: 0, regen: 0, armor: 0, cooldown: 1 }
+  const mods = { ...BASE_MODS }
 
   const player = { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0, stride: 0 }
   const drone = { active: 0, cooldown: 0, x: 0, y: 0, angle: 0, orbit: 0, fireTimer: 0 }
@@ -621,6 +648,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   let bullets: Bullet[] = []
   let sparks: Spark[] = []
   let decals: Decal[] = []
+  let pops: Pop[] = []
   let offered: Upgrade[] = []
 
   const held = new Set<string>()
@@ -651,9 +679,38 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       },
     },
     { icon: '💥', title: 'Damage Buff', desc: () => '+25% damage on every weapon', apply: () => (mods.damage *= 1.25) },
-    { icon: '👟', title: 'Movement Speed', desc: () => '+12% movement speed', apply: () => (mods.speed *= 1.12) },
-    { icon: '⚡', title: 'Reload Speed', desc: () => '−25% reload time', apply: () => (mods.reload *= 0.75) },
-    { icon: '🔥', title: 'Fire Rate', desc: () => '+15% fire and swing rate', apply: () => (mods.fireRate *= 1.15) },
+    { icon: '👟', title: 'Fleet Foot', desc: () => '+15% movement speed', apply: () => (mods.speed *= 1.15) },
+    {
+      icon: '❤️',
+      title: 'Toughness',
+      desc: () => `+20% max HP (${player.maxHp} → ${Math.round(player.maxHp * 1.2)}), gained HP is healed`,
+      apply: () => {
+        const gain = Math.round(player.maxHp * 0.2)
+        player.maxHp += gain
+        player.hp = Math.min(player.maxHp, player.hp + gain)
+      },
+    },
+    { icon: '⚡', title: 'Quick Hands', desc: () => '+15% reload speed', apply: () => (mods.reload /= 1.15) },
+    {
+      icon: '🎯',
+      title: 'Piercing Bullets',
+      desc: () => `Bullets pass through +1 more zombie (${mods.pierce} → ${mods.pierce + 1} extra)`,
+      apply: () => (mods.pierce += 1),
+      available: () => weapons.some((w) => !w.def.melee),
+    },
+    {
+      icon: '✴️',
+      title: 'Critical Hits',
+      desc: () => `+10% chance to deal double damage (${Math.round(mods.crit * 100)}% → ${Math.round((mods.crit + 0.1) * 100)}%)`,
+      apply: () => (mods.crit = Math.min(MAX_CRIT, mods.crit + 0.1)),
+      available: () => mods.crit < MAX_CRIT,
+    },
+    {
+      icon: '💚',
+      title: 'Regeneration',
+      desc: () => `Regenerate +1.5 HP per second (${mods.regen.toFixed(1)} → ${(mods.regen + 1.5).toFixed(1)}/s)`,
+      apply: () => (mods.regen += 1.5),
+    },
     {
       icon: '📦',
       title: 'Extended Mags',
@@ -662,16 +719,26 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         mods.magazine *= 1.4
         for (const w of weapons) w.ammo = magSize(w.def)
       },
+      available: () => weapons.some((w) => !w.def.melee),
     },
     {
-      icon: '❤️',
-      title: 'Vitality',
-      desc: () => '+25 max HP and heal 50%',
-      apply: () => {
-        player.maxHp += 25
-        player.hp = Math.min(player.maxHp, player.hp + player.maxHp * 0.5)
-      },
+      icon: '🦺',
+      title: 'Extra Armor',
+      desc: () => `Take 10% less damage (${Math.round(mods.armor * 100)}% → ${Math.round((mods.armor + 0.1) * 100)}%)`,
+      apply: () => (mods.armor = Math.min(MAX_ARMOR, mods.armor + 0.1)),
+      available: () => mods.armor < MAX_ARMOR,
     },
+    {
+      icon: '⏱️',
+      title: 'Overclock',
+      desc: () => `−15% drone cooldown (${Math.round(DRONE_COOLDOWN * mods.cooldown)}s → ${Math.round(DRONE_COOLDOWN * mods.cooldown * 0.85)}s)`,
+      apply: () => {
+        mods.cooldown *= 0.85
+        drone.cooldown = Math.min(drone.cooldown, DRONE_COOLDOWN * mods.cooldown)
+      },
+      available: () => cls.drone && mods.cooldown > 0.4,
+    },
+    { icon: '🔥', title: 'Fire Rate', desc: () => '+15% fire and swing rate', apply: () => (mods.fireRate *= 1.15) },
   ]
 
   const pushOut = (e: { x: number; y: number }, r: number) => {
@@ -737,7 +804,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     upgradesTaken = 0
     bossBanner = 0
     shake = 0
-    Object.assign(mods, { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1 })
+    Object.assign(mods, BASE_MODS)
     Object.assign(player, { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0 })
     Object.assign(drone, { active: 0, cooldown: 0, x: player.x, y: player.y, angle: 0, orbit: 0, fireTimer: 0 })
     weapons = cls.weapons.map((def) => ({ def, ammo: def.magazine, reloading: 0 }))
@@ -746,6 +813,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     bullets = []
     sparks = []
     decals = []
+    pops = []
     offered = []
     hidePanels()
     cam.x = clamp(player.x - VIEW_W / 2, 0, ARENA_W - VIEW_W)
@@ -782,7 +850,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         ? `<div>
             <div class="text-[10px] font-bold uppercase tracking-widest text-slate-500">Special [F]</div>
             <div class="text-sm font-bold text-white">Deployable Drone</div>
-            <div class="text-[11px] text-slate-400">Lasts ${DRONE_DURATION}s · ${DRONE_COOLDOWN}s cooldown · fires at AR speed</div>
+            <div class="text-[11px] text-slate-400">Lasts ${DRONE_DURATION}s · ${DRONE_COOLDOWN}s cooldown · fires 5% slower than the AR</div>
           </div>`
         : ''
       btn.innerHTML = `
@@ -909,10 +977,10 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     phase = 'upgrade'
     upgradesTaken += 1
     pointerDown = false
-    const pool = [...UPGRADES]
+    const pool = UPGRADES.filter((up) => !up.available || up.available())
     offered = []
     while (offered.length < 3 && pool.length) offered.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0])
-    upgradeMinute.textContent = `Minute ${upgradesTaken} survived · horde paused`
+    upgradeMinute.textContent = `Wave ${spawnSteps()} cleared · horde paused`
     upgradeCards.innerHTML = ''
     offered.forEach((up, i) => {
       const btn = document.createElement('button')
@@ -955,10 +1023,30 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     overBest.textContent = record
       ? `New personal best!${previousBest > 0 ? ` (old ${formatClock(previousBest)})` : ''}`
       : `Personal best ${formatClock(previousBest)}`
+    postRun(seconds)
     showPanel(overPanel)
     stopMusic()
     playMusic('gameover')
     playSfx('explosion')
+  }
+
+  const postRun = (seconds: number) => {
+    const waves = spawnSteps() + 1
+    overBoard.textContent = `Reached wave ${waves} · posting to global leaderboard…`
+    submitHordeRun({ waves, kills, seconds, className: cls.name })
+      .then((result) => {
+        overBoard.textContent =
+          result === 'posted'
+            ? `Reached wave ${waves} · new global leaderboard best posted`
+            : result === 'not-best'
+              ? `Reached wave ${waves} · your leaderboard best still stands`
+              : result === 'guest'
+                ? `Reached wave ${waves} · log in (Settings → Profile) to post to the leaderboard`
+                : `Reached wave ${waves}`
+      })
+      .catch(() => {
+        overBoard.textContent = `Reached wave ${waves} · leaderboard unreachable`
+      })
   }
 
   const burst = (x: number, y: number, color: string, count: number, speed = 180) => {
@@ -985,9 +1073,16 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     }
   }
 
-  const damageZombie = (z: Zombie, amount: number, knockX: number, knockY: number) => {
-    z.hp -= amount
+  /** `fromPlayer` hits can crit and show a damage number; drone rounds do neither. */
+  const damageZombie = (z: Zombie, amount: number, knockX: number, knockY: number, fromPlayer: boolean) => {
+    const crit = fromPlayer && Math.random() < mods.crit
+    const dealt = crit ? amount * CRIT_MULT : amount
+    z.hp -= dealt
     z.hitFlash = 0.08
+    if (fromPlayer) {
+      pops.push({ x: z.x + (Math.random() - 0.5) * 10, y: z.y - z.r - 4, amount: dealt, life: POP_LIFE, crit })
+      if (pops.length > 80) pops.splice(0, pops.length - 80)
+    }
     const knock = z.kind === 'miniboss' ? 2 : z.kind === 'brute' ? 5 : 10
     z.x += knockX * knock
     z.y += knockY * knock
@@ -1009,7 +1104,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   const deployDrone = () => {
     if (phase !== 'playing' || !cls.drone || drone.cooldown > 0) return
     drone.active = DRONE_DURATION
-    drone.cooldown = DRONE_COOLDOWN
+    drone.cooldown = DRONE_COOLDOWN * mods.cooldown
     drone.x = player.x
     drone.y = player.y
     playSfx('turret')
@@ -1019,7 +1114,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     const melee = def.melee
     if (!melee) return
     player.slash = 0.18
-    playSfx('boss-dash')
+    playSfx('katana')
     for (const z of zombies) {
       if (z.hp <= 0) continue
       const dx = z.x - player.x
@@ -1029,7 +1124,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       let diff = Math.atan2(dy, dx) - player.angle
       diff = Math.atan2(Math.sin(diff), Math.cos(diff))
       if (Math.abs(diff) > melee.arc / 2 && dist > z.r + PLAYER_RADIUS) continue
-      damageZombie(z, def.damage * mods.damage, dx / (dist || 1), dy / (dist || 1))
+      damageZombie(z, def.damage * mods.damage, dx / (dist || 1), dy / (dist || 1), true)
       burst(z.x, z.y, '#e9d5ff', 4, 140)
     }
   }
@@ -1067,7 +1162,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         hit: new Set(),
       })
     }
-    playSfx(def.damage >= 150 ? 'barricade' : 'swap')
+    playSfx(def === SNIPER ? 'sniper' : def === REVOLVER ? 'barricade' : 'swap')
+    shake = Math.max(shake, HEAVY_SHAKE.get(def) ?? 0)
     if (w.ammo <= 0) startReload(w)
   }
 
@@ -1094,6 +1190,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     drone.angle = Math.atan2(target.y - drone.y, target.x - drone.x)
     if (drone.fireTimer > 0) return
     drone.fireTimer = DRONE_FIRE_INTERVAL
+    playSfx('drone-shot')
     const speed = 950
     bullets.push({
       x: drone.x,
@@ -1144,9 +1241,15 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       s.life -= dt
     }
     sparks = sparks.filter((s) => s.life > 0)
+    for (const pop of pops) {
+      pop.life -= dt
+      pop.y -= dt * 40
+    }
+    pops = pops.filter((pop) => pop.life > 0)
     if (phase !== 'playing') return
 
     elapsed += dt
+    if (mods.regen > 0) player.hp = Math.min(player.maxHp, player.hp + mods.regen * dt)
 
     let mx = 0
     let my = 0
@@ -1218,7 +1321,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         if (dx * dx + dy * dy > (z.r + 3) * (z.r + 3)) continue
         b.hit.add(z)
         const speed = Math.hypot(b.vx, b.vy) || 1
-        damageZombie(z, b.damage, b.vx / speed, b.vy / speed)
+        damageZombie(z, b.damage, b.vx / speed, b.vy / speed, !b.drone)
         burst(b.x, b.y, '#dc2626', 2, 90)
         if (b.pierce <= 0) {
           b.life = 0
@@ -1264,7 +1367,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       }
       if (dist < z.r + PLAYER_RADIUS && z.attackCd <= 0) {
         z.attackCd = z.kind === 'miniboss' ? 0.9 : 0.75
-        player.hp -= z.damage
+        player.hp -= z.damage * (1 - mods.armor)
         player.hurt = 0.25
         shake = Math.max(shake, z.kind === 'miniboss' ? 9 : 4)
         playSfx('sting')
@@ -1583,7 +1686,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         hudAbilityBar.style.width = `${(drone.active / DRONE_DURATION) * 100}%`
       } else if (drone.cooldown > 0) {
         hudAbilityState.textContent = `${Math.ceil(drone.cooldown)}s`
-        hudAbilityBar.style.width = `${(1 - drone.cooldown / DRONE_COOLDOWN) * 100}%`
+        hudAbilityBar.style.width = `${(1 - drone.cooldown / (DRONE_COOLDOWN * mods.cooldown)) * 100}%`
       } else {
         hudAbilityState.textContent = 'READY'
         hudAbilityBar.style.width = '100%'
@@ -1594,8 +1697,40 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     const toUpgrade = Math.max(0, nextUpgradeAt - elapsed)
     hudUpgradeIn.textContent = `${Math.ceil(toUpgrade)}s`
     hudUpgradeBar.style.width = `${(1 - toUpgrade / UPGRADE_SECONDS) * 100}%`
-    hudThreat.textContent = `Threat Lv ${spawnSteps() + 1} · spawns x${spawnRateMult().toFixed(2)}`
+    hudThreat.textContent = `Wave ${spawnSteps() + 1} · spawns x${spawnRateMult().toFixed(2)}`
     hudBossIn.textContent = `Mini-boss in ${formatClock(nextBossAt - elapsed)}`
+  }
+
+  const drawPops = () => {
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const pop of pops) {
+      const age = POP_LIFE - pop.life
+      if (age < MARKER_LIFE) {
+        const k = 1 - age / MARKER_LIFE
+        const arm = 4 + k * 3
+        const my = pop.y + 14 + age * 40
+        ctx.globalAlpha = k
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pop.x - arm, my - arm)
+        ctx.lineTo(pop.x + arm, my + arm)
+        ctx.moveTo(pop.x + arm, my - arm)
+        ctx.lineTo(pop.x - arm, my + arm)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = Math.min(1, pop.life / (POP_LIFE * 0.5)) * 0.85
+      ctx.font = pop.crit ? '800 15px ui-sans-serif, system-ui, sans-serif' : '700 11px ui-sans-serif, system-ui, sans-serif'
+      const text = pop.crit ? `${Math.round(pop.amount)}!` : `${Math.round(pop.amount)}`
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+      ctx.strokeText(text, pop.x, pop.y)
+      ctx.fillStyle = pop.crit ? '#fde047' : '#fecaca'
+      ctx.fillText(text, pop.x, pop.y)
+    }
+    ctx.restore()
   }
 
   const drawCanvasHud = () => {
@@ -1641,6 +1776,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       ctx.fillRect(s.x - 1.5, s.y - 1.5, 3, 3)
     }
     ctx.globalAlpha = 1
+    drawPops()
     ctx.restore()
 
     if (player.hurt > 0) {

@@ -33,6 +33,9 @@ export type SfxId =
   | 'explosion'
   | 'swap'
   | 'type'
+  | 'katana'
+  | 'drone-shot'
+  | 'sniper'
 
 const SFX: Record<SfxId, SoundProfile> = {
   turret: { startFreq: 180, endFreq: 620, duration: 0.28, type: 'square', gain: 0.14 },
@@ -47,7 +50,21 @@ const SFX: Record<SfxId, SoundProfile> = {
   explosion: { startFreq: 260, endFreq: 24, duration: 1.9, type: 'sawtooth', gain: 0.32 },
   swap: { startFreq: 300, endFreq: 700, duration: 0.12, type: 'square', gain: 0.1 },
   type: { startFreq: 640, endFreq: 520, duration: 0.03, type: 'square', gain: 0.03 },
+  katana: { startFreq: 2400, endFreq: 380, duration: 0.18, type: 'triangle', gain: 0.1 },
+  'drone-shot': { startFreq: 1500, endFreq: 900, duration: 0.04, type: 'square', gain: 0.035 },
+  sniper: { startFreq: 1300, endFreq: 140, duration: 0.12, type: 'sawtooth', gain: 0.16 },
 }
+
+/** Extra voices stacked under a base effect so signature sounds read as heavier. */
+const LAYERS: Partial<Record<SfxId, SoundProfile[]>> = {
+  katana: [{ startFreq: 5200, endFreq: 1800, duration: 0.12, type: 'sine', gain: 0.05 }],
+  sniper: [
+    { startFreq: 160, endFreq: 32, duration: 0.6, type: 'sine', gain: 0.3 },
+    { startFreq: 480, endFreq: 60, duration: 0.32, type: 'triangle', gain: 0.12 },
+  ],
+}
+/** Campaign weapons that share a signature effect instead of a plain blip. */
+const SIGNATURE: Record<string, SfxId> = { 'titan-sniper': 'sniper' }
 
 export type MusicTrack = 'menu' | 'battle' | 'boss' | 'gameover' | 'victory' | 'story'
 
@@ -119,6 +136,11 @@ function blip(profile: SoundProfile, destination: AudioNode, when: number, ctx: 
 export function playShot(weapon: Weapon) {
   const ctx = ensureContext()
   if (!ctx || !sfxGain) return
+  const signature = SIGNATURE[weapon.id]
+  if (signature) {
+    playSfx(signature)
+    return
+  }
   resumeAudio()
   blip(PROFILES[weapon.id] ?? PROFILES['rusty-pistol'], sfxGain, ctx.currentTime, ctx)
 }
@@ -128,6 +150,7 @@ export function playSfx(id: SfxId) {
   if (!ctx || !sfxGain) return
   resumeAudio()
   blip(SFX[id], sfxGain, ctx.currentTime, ctx)
+  for (const layer of LAYERS[id] ?? []) blip(layer, sfxGain, ctx.currentTime, ctx)
 }
 
 function noteFreq(semitones: number): number {

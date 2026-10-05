@@ -16,5 +16,29 @@ service cloud.firestore {
       allow create: if request.auth != null && request.resource.data.uid == request.auth.uid;
       allow update, delete: if false;
     }
+
+    // Endless Horde leaderboard: world-readable, one best-run document per
+    // player, written only by its owner and shape-checked.
+    match /hordeLeaderboard/{uid} {
+      allow read: if true;
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['username', 'waves', 'kills', 'seconds', 'className', 'updatedAt'])
+        && request.resource.data.username is string
+        && request.resource.data.username.size() > 0
+        && request.resource.data.username.size() <= 16
+        && request.resource.data.className is string
+        && request.resource.data.className.size() <= 16
+        && request.resource.data.waves is int
+        && request.resource.data.waves >= 1
+        && request.resource.data.waves <= 5000
+        && request.resource.data.kills is int
+        && request.resource.data.kills >= 0
+        && request.resource.data.kills <= 1000000
+        && request.resource.data.seconds is int
+        && request.resource.data.seconds >= 0
+        && request.resource.data.updatedAt is int;
+      allow delete: if false;
+    }
   }
 }

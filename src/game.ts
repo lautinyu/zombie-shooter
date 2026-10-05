@@ -496,6 +496,21 @@ interface Bullet {
   tracerLength: number
 }
 
+/** A floating damage number plus the red hit-marker cross at the impact. */
+interface HitPop {
+  x: number
+  y: number
+  amount: number
+  life: number
+  heavy: boolean
+}
+
+const HIT_POP_LIFE = 0.7
+const HIT_MARKER_LIFE = 0.18
+const HIT_POP_MAX = 90
+/** Weapons whose shots kick the camera. */
+const HEAVY_WEAPONS = new Set(['titan-sniper', 'thermal-railgun'])
+
 interface AmmoBox {
   x: number
   y: number
@@ -1180,6 +1195,7 @@ export class Game {
   private revealTimer = 0
   private bubbleTimer = 0
   private shake = 0
+  private hitPops: HitPop[] = []
   /** Seconds of eased camera motion left after the cinematic hands back. */
   private cameraEase = 0
 
@@ -1442,6 +1458,7 @@ export class Game {
     this.revealTimer = 0
     this.bubbleTimer = 0
     this.shake = 0
+    this.hitPops = []
     this.cameraEase = 0
 
     // Spore Hives and supply crates sit at fixed, hand-placed jungle spots so
@@ -1871,6 +1888,11 @@ export class Game {
       return
     }
     this.shake = Math.max(0, this.shake - dt * 1.6)
+    for (const pop of this.hitPops) {
+      pop.life -= dt
+      pop.y -= dt * 42
+    }
+    this.hitPops = this.hitPops.filter((pop) => pop.life > 0)
     this.bannerTimer = Math.max(0, this.bannerTimer - dt)
     this.flash = Math.max(0, this.flash - dt)
     this.bubbleTimer = Math.max(0, this.bubbleTimer - dt)
@@ -2972,6 +2994,7 @@ export class Game {
     }
     if (!w.infiniteAmmo) p.mag -= 1
     p.recoil = 1
+    if (HEAVY_WEAPONS.has(w.id)) this.shake = Math.max(this.shake, 0.4)
     playShot(w)
   }
 
@@ -3019,6 +3042,7 @@ export class Game {
       if (Math.abs(angleDelta(to, blade)) > half) continue
       p.swingHits.push(e)
       e.hp -= damage * this.enemyArmour
+      this.popHit(e.x, e.y - e.r, damage * this.enemyArmour)
       this.moveEnemy(e, Math.cos(to) * melee.knockback, Math.sin(to) * melee.knockback)
       if (melee.stunChance > 0 && Math.random() < melee.stunChance) e.stun = melee.stunTime
       if (e.hp <= 0) this.killEnemy(i)
@@ -3032,6 +3056,7 @@ export class Game {
       if (d <= p.r + melee.reach + boss.r && Math.abs(angleDelta(to, blade)) <= half) {
         p.swingHitBoss = true
         boss.hp -= damage
+        this.popHit(boss.x, boss.y - boss.r, damage)
         boss.hurt = 0.12
         this.checkBossPhase(boss)
       }
@@ -3118,6 +3143,7 @@ export class Game {
         const travelled = 1 - b.life / b.maxLife
         const dealt = b.damage * (1 - (1 - b.falloff) * travelled)
         boss.hp -= dealt
+        if (b.owner) this.popHit(b.x, b.y, dealt)
         this.arenaOnHit(b, dealt, b.x, b.y, null)
         if (b.blast > 0) dead = true
         boss.hurt = 0.12
@@ -3164,6 +3190,7 @@ export class Game {
           const armour = b.ignoreArmour ? 1 : this.enemyArmour
           const dealt = b.damage * (1 - (1 - b.falloff) * travelled) * armour
           e.hp -= dealt
+          if (b.owner) this.popHit(b.x, b.y, dealt)
           this.arenaOnHit(b, dealt, e.x, e.y, e)
           if (b.poison) {
             e.poison = POISON_DURATION
@@ -3491,7 +3518,7 @@ export class Game {
         b.lastX = b.x
         b.lastY = b.y
         this.fireOverseerRing(b, enraged ? 28 : 20, OVERSEER_BOLT_SPEED * 0.8)
-        this.shake = Math.max(this.shake, 0.7)
+        this.shake = Math.max(this.shake, 0.9)
         playSfx('explosion')
         b.patternTimer = rest
       }
@@ -3521,6 +3548,7 @@ export class Game {
           for (let i = 0; i < fan; i++) {
             this.fireOverseerBolt(b, b.angle + (i - (fan - 1) / 2) * 0.14, OVERSEER_BOLT_SPEED * 1.25)
           }
+          this.shake = Math.max(this.shake, 0.3)
           playSfx('turret')
         }
         if (b.volley <= 0) b.patternTimer = rest
@@ -3548,6 +3576,7 @@ export class Game {
     if (b.pattern === 0) {
       b.volley = enraged ? 40 : 28
       b.volleyTimer = 0
+      this.shake = Math.max(this.shake, 0.5)
       playSfx('overdrive')
     } else if (b.pattern === 1) {
       b.volley = enraged ? 5 : 3
@@ -3564,6 +3593,7 @@ export class Game {
         if (this.enemies.length >= OVERSEER_MAX_ADDS) break
         this.enemies.push(this.makeDrone(this.openSpot(14, b, b.r + 30, 220)))
       }
+      this.shake = Math.max(this.shake, 0.6)
       playSfx('boss-roar')
       b.patternTimer = enraged ? OVERSEER_REST * 0.6 : OVERSEER_REST
     }
@@ -4967,6 +4997,12 @@ export class Game {
     ctx.restore()
 
     this.drawVisibility()
+    if (this.hitPops.length) {
+      ctx.save()
+      this.applyWorldTransform()
+      this.drawHitPops()
+      ctx.restore()
+    }
     this.drawFlash()
     this.drawCrosshair()
     this.drawMinimap()
@@ -6017,6 +6053,45 @@ export class Game {
       ctx.beginPath()
       ctx.arc(0, 0, b.r, 0, Math.PI * 2)
       ctx.fill()
+    }
+    ctx.restore()
+  }
+
+  /** Queues a damage number and hit-marker for a player-dealt hit. */
+  private popHit(x: number, y: number, amount: number) {
+    if (amount < 1) return
+    this.hitPops.push({ x, y, amount, life: HIT_POP_LIFE, heavy: amount >= 120 })
+    if (this.hitPops.length > HIT_POP_MAX) this.hitPops.splice(0, this.hitPops.length - HIT_POP_MAX)
+  }
+
+  private drawHitPops() {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const pop of this.hitPops) {
+      const age = HIT_POP_LIFE - pop.life
+      if (age < HIT_MARKER_LIFE) {
+        const k = 1 - age / HIT_MARKER_LIFE
+        const arm = 5 + k * 3
+        ctx.globalAlpha = k
+        ctx.strokeStyle = '#ef4444'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.moveTo(pop.x - arm, pop.y + 18 - arm)
+        ctx.lineTo(pop.x + arm, pop.y + 18 + arm)
+        ctx.moveTo(pop.x + arm, pop.y + 18 - arm)
+        ctx.lineTo(pop.x - arm, pop.y + 18 + arm)
+        ctx.stroke()
+      }
+      ctx.globalAlpha = Math.min(1, pop.life / (HIT_POP_LIFE * 0.5)) * 0.85
+      ctx.font = pop.heavy ? '800 15px ui-sans-serif, system-ui, sans-serif' : '700 11px ui-sans-serif, system-ui, sans-serif'
+      ctx.lineWidth = 3
+      ctx.strokeStyle = 'rgba(0,0,0,0.7)'
+      const text = `${Math.round(pop.amount)}`
+      ctx.strokeText(text, pop.x, pop.y)
+      ctx.fillStyle = pop.heavy ? '#fde047' : '#fecaca'
+      ctx.fillText(text, pop.x, pop.y)
     }
     ctx.restore()
   }
