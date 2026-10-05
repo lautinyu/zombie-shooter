@@ -13,7 +13,10 @@ import {
   updateSettings,
 } from './settings'
 import { playSfx } from './audio'
-import { clearProfile } from './profile'
+import type { Profile } from './profile'
+import { campaignCleared, clearProfile, ngPlusUnlocked } from './profile'
+import type { SurvivorSkinId } from './survivorSkins'
+import { SURVIVOR_SKINS, drawSurvivor, skinUnlockHint, skinUnlocked } from './survivorSkins'
 import { clearArcadeStats } from './arcadeStats'
 import {
   PASSWORD_WARNING,
@@ -33,6 +36,12 @@ export interface SettingsPanel {
 
 export type Tab = 'profile' | 'audio' | 'controls'
 
+/** The live campaign save the Locker reads and equips skins on. */
+export interface LockerHost {
+  profile: () => Profile
+  save: () => void
+}
+
 /** The slot currently listening for the next key or mouse button. */
 interface Capture {
   player: 'p1' | 'p2'
@@ -42,7 +51,7 @@ interface Capture {
 const SLOT_CLASS =
   'w-36 rounded-md bg-white/10 px-3 py-1.5 text-xs font-bold text-slate-100 ring-1 ring-white/15 hover:bg-white/20'
 
-export function mountSettings(): SettingsPanel {
+export function mountSettings(locker: LockerHost): SettingsPanel {
   const overlay = document.createElement('div')
   overlay.className =
     'fixed inset-0 z-[60] hidden items-center justify-center bg-slate-950/90 p-4 backdrop-blur-sm'
@@ -148,6 +157,88 @@ export function mountSettings(): SettingsPanel {
       </div>`
   }
 
+  const lockerSection = () => {
+    const profile = locker.profile()
+    const cleared = campaignCleared(profile)
+    const ngPlus = ngPlusUnlocked(profile)
+    const card = (key: string, id: SurvivorSkinId | null, name: string, blurb: string, ring: string, text: string, unlocked: boolean, hint: string) => {
+      const equipped = profile.skin === id
+      const border = equipped
+        ? `ring-2 ${ring} bg-white/10 shadow-[0_0_18px_rgba(255,255,255,0.12)]`
+        : unlocked
+          ? 'ring-1 ring-white/10 bg-black/40 hover:bg-white/10 hover:ring-white/30'
+          : 'ring-1 ring-white/5 bg-black/30 opacity-60 cursor-not-allowed'
+      return `
+        <button data-skin="${id ?? 'default'}" ${unlocked ? '' : 'disabled'} class="relative flex flex-col items-center gap-1 rounded-xl p-3 text-center transition ${border}">
+          <span class="absolute left-2 top-2 rounded bg-white/10 px-1.5 py-0.5 font-mono text-[10px] font-black text-slate-300 ring-1 ring-white/15">${key}</span>
+          ${equipped ? '<span class="absolute right-2 top-2 rounded bg-emerald-500/80 px-1.5 py-0.5 text-[9px] font-black uppercase tracking-wider text-slate-950">Equipped</span>' : ''}
+          <canvas data-skin-preview="${id ?? 'default'}" width="96" height="96" class="h-20 w-20 rounded-lg bg-slate-800/70 ring-1 ring-white/10"></canvas>
+          <span class="text-xs font-black uppercase tracking-widest ${text}">${name}</span>
+          <span class="text-[10px] leading-tight text-slate-400">${unlocked ? blurb : `🔒 ${hint}`}</span>
+        </button>`
+    }
+    const cards = [
+      card('0', null, 'Survivor', "Your survivor's own outfit.", 'ring-slate-300', 'text-slate-200', true, ''),
+      ...SURVIVOR_SKINS.map((skin, i) =>
+        card(`${i + 1}`, skin.id, skin.name, skin.blurb, skin.ring, skin.text, skinUnlocked(skin, cleared, ngPlus), skinUnlockHint(skin)),
+      ),
+    ].join('')
+    return `
+      <div class="mb-6 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
+        <div class="flex items-baseline justify-between gap-3">
+          <div class="text-xs font-black uppercase tracking-widest text-slate-300">Locker / Character Skins</div>
+          <div class="text-[10px] uppercase tracking-widest text-slate-500">Press 0–${SURVIVOR_SKINS.length} to equip</div>
+        </div>
+        <p class="mt-1 text-[11px] text-slate-500">Worn by Player 1 in campaign missions. Saved with your profile and cloud save.</p>
+        <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">${cards}</div>
+      </div>`
+  }
+
+  const equipSkin = (value: string | undefined) => {
+    const profile = locker.profile()
+    const cleared = campaignCleared(profile)
+    const ngPlus = ngPlusUnlocked(profile)
+    const skin = SURVIVOR_SKINS.find((s) => s.id === value)
+    if (value !== 'default' && (!skin || !skinUnlocked(skin, cleared, ngPlus))) return
+    const next = skin ? skin.id : null
+    if (profile.skin === next) return
+    profile.skin = next
+    locker.save()
+    playSfx('swap')
+    render()
+  }
+
+  const drawSkinPreviews = () => {
+    const profile = locker.profile()
+    for (const canvas of panel.querySelectorAll<HTMLCanvasElement>('[data-skin-preview]')) {
+      const c = canvas.getContext('2d')
+      if (!c) continue
+      const id = SURVIVOR_SKINS.find((s) => s.id === canvas.dataset.skinPreview)?.id
+      c.clearRect(0, 0, canvas.width, canvas.height)
+      c.save()
+      c.translate(48, 50)
+      c.scale(2.5, 2.5)
+      c.rotate(-Math.PI / 2)
+      c.fillStyle = '#1f2937'
+      c.fillRect(6, -3.5, 22, 7)
+      if (id) {
+        drawSurvivor(c, id, 0, 0)
+      } else {
+        c.fillStyle = '#475569'
+        c.beginPath()
+        c.arc(0, 0, 12, 0, Math.PI * 2)
+        c.fill()
+        c.fillStyle = '#e2e8f0'
+        c.font = '900 12px ui-sans-serif, system-ui, sans-serif'
+        c.textAlign = 'center'
+        c.textBaseline = 'middle'
+        c.rotate(Math.PI / 2)
+        c.fillText(profile.character ? '★' : '?', 0, 1)
+      }
+      c.restore()
+    }
+  }
+
   const profileTab = () => {
     const s = settings()
     const choices = AVATARS.map((a) => {
@@ -159,6 +250,7 @@ export function mountSettings(): SettingsPanel {
     }).join('')
     return `
       ${accountSection()}
+      ${lockerSection()}
       <label class="mb-2 block text-xs font-black uppercase tracking-widest text-slate-300">Player Name</label>
       <input id="profile-name" type="text" maxlength="${NAME_MAX}" value="${s.playerName}" placeholder="Survivor"
         class="w-full rounded-lg bg-white/10 px-4 py-2 text-sm font-bold text-white ring-1 ring-white/15 outline-none focus:ring-emerald-400/60" />
@@ -271,6 +363,11 @@ export function mountSettings(): SettingsPanel {
       }
       updateSettings({ playerName: name })
     })
+
+    for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-skin]')) {
+      button.addEventListener('click', () => equipSkin(button.dataset.skin))
+    }
+    drawSkinPreviews()
 
     for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-avatar]')) {
       button.addEventListener('click', () => {
@@ -412,6 +509,16 @@ export function mountSettings(): SettingsPanel {
       if (!open) return
       if (!capture) {
         if (e.key === 'Escape') close()
+        const typing = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement
+        const slot = /^Digit(\d)$/.exec(e.code)
+        if (tab === 'profile' && slot && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          const index = Number(slot[1])
+          if (index <= SURVIVOR_SKINS.length) {
+            e.preventDefault()
+            e.stopPropagation()
+            equipSkin(index === 0 ? 'default' : SURVIVOR_SKINS[index - 1].id)
+          }
+        }
         return
       }
       e.preventDefault()

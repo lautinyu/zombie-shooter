@@ -1119,6 +1119,7 @@ function launch(m: Mission) {
   const roster = [characterById(activeCharacter())]
   if (profile.players === 2) roster.push(characterById(secondCharacter()))
   const loadout = [weaponById(profile.primary), weaponById(profile.secondary)]
+  game.setSkin(profile.skin)
   // The Crucible opens on the dying survivor's warning, then the swarm starts.
   if (m.type === 'arena') {
     show(menu, false)
@@ -1517,7 +1518,7 @@ el('arcade-hub-btn').addEventListener('click', () => enterCabinet(() => arcadeHu
 // Mirror every local save into Firestore once an account is signed in.
 startCloudSync()
 
-const settingsPanel = mountSettings()
+const settingsPanel = mountSettings({ profile: () => profile, save: persist })
 el('settings-btn').addEventListener('click', () => {
   resumeAudio()
   settingsPanel.open()

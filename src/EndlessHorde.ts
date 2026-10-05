@@ -11,6 +11,7 @@
 import { playMusic, playSfx, stopMusic } from './audio'
 import { highScore, recordPlay, submitScore } from './arcadeStats'
 import { submitHordeRun } from './cloud/leaderboard'
+import { drawSurvivor } from './survivorSkins'
 
 const VIEW_W = 960
 const VIEW_H = 560
@@ -187,8 +188,6 @@ interface WeaponState {
   reloading: number
 }
 
-const TAU = Math.PI * 2
-
 /** The equipped weapon, drawn in the survivor's local frame facing +x. */
 function drawGun(c: CanvasRenderingContext2D, def: WeaponDef | undefined) {
   if (!def) return
@@ -222,186 +221,6 @@ function drawGun(c: CanvasRenderingContext2D, def: WeaponDef | undefined) {
     c.fillStyle = '#111827'
     c.fillRect(14, 3, 4, 5)
   }
-}
-
-/** Arms reaching from the shoulders to the grip. */
-function drawArms(c: CanvasRenderingContext2D, color: string) {
-  c.strokeStyle = color
-  c.lineWidth = 4
-  c.lineCap = 'round'
-  c.beginPath()
-  c.moveTo(1, -10)
-  c.lineTo(11, -2.5)
-  c.moveTo(1, 10)
-  c.lineTo(9, 2.5)
-  c.stroke()
-}
-
-/**
- * A top-down Horde survivor in its local frame (facing +x). Each class has
- * its own silhouette: SWAT plate and visor, the Assassin's hood and cape, the
- * Technician's hard hat and pack, and the Marksman's ghillie and boonie hat.
- */
-function drawSurvivor(c: CanvasRenderingContext2D, id: ClassId, stride: number, t: number) {
-  const step = Math.sin(stride) * 3
-  c.fillStyle = '#111827'
-  c.beginPath()
-  c.ellipse(step, -6, 5, 3.5, 0, 0, TAU)
-  c.fill()
-  c.beginPath()
-  c.ellipse(-step, 6, 5, 3.5, 0, 0, TAU)
-  c.fill()
-
-  if (id === 'swat') {
-    c.fillStyle = '#1e293b'
-    c.beginPath()
-    c.ellipse(0, 0, 9, 15, 0, 0, TAU)
-    c.fill()
-    c.fillStyle = '#1e3a8a'
-    c.fillRect(-9, -10, 16, 20)
-    c.fillStyle = '#2563eb'
-    c.fillRect(-5, -6, 9, 12)
-    c.fillStyle = '#f8fafc'
-    c.fillRect(-9, -4, 2, 8)
-    c.fillStyle = '#334155'
-    for (const side of [-1, 1]) {
-      c.beginPath()
-      c.arc(0, side * 12, 4.5, 0, TAU)
-      c.fill()
-    }
-    drawArms(c, '#1e293b')
-    c.fillStyle = '#0f172a'
-    c.beginPath()
-    c.arc(-1, 0, 7.5, 0, TAU)
-    c.fill()
-    c.strokeStyle = '#38bdf8'
-    c.lineWidth = 3
-    c.beginPath()
-    c.arc(-1, 0, 6.5, -0.9, 0.9)
-    c.stroke()
-    return
-  }
-
-  if (id === 'assassin') {
-    const sway = Math.sin(t * 4 + stride * 0.5) * 4
-    c.fillStyle = '#2e1065'
-    c.beginPath()
-    c.moveTo(-2, -12)
-    c.quadraticCurveTo(-26, sway - 4, -22, sway)
-    c.quadraticCurveTo(-26, sway + 4, -2, 12)
-    c.closePath()
-    c.fill()
-    c.strokeStyle = '#dc2626'
-    c.lineWidth = 3
-    c.lineCap = 'round'
-    c.beginPath()
-    c.moveTo(-4, 3)
-    c.quadraticCurveTo(-12, 4 + sway, -19, 7 + sway * 1.4)
-    c.stroke()
-    c.fillStyle = '#3b0764'
-    c.beginPath()
-    c.ellipse(0, 0, 8, 12, 0, 0, TAU)
-    c.fill()
-    drawArms(c, '#1e1b4b')
-    c.fillStyle = '#4c1d95'
-    c.beginPath()
-    c.arc(-1, 0, 7.5, 0, TAU)
-    c.fill()
-    c.fillStyle = '#0b0616'
-    c.beginPath()
-    c.ellipse(3.5, 0, 3.5, 4.5, 0, 0, TAU)
-    c.fill()
-    c.fillStyle = '#c084fc'
-    c.fillRect(4.5, -2.4, 1.8, 1.4)
-    c.fillRect(4.5, 1, 1.8, 1.4)
-    return
-  }
-
-  if (id === 'technician') {
-    c.fillStyle = '#475569'
-    c.fillRect(-16, -8, 9, 16)
-    c.fillStyle = '#64748b'
-    c.fillRect(-16, -2, 9, 3)
-    c.strokeStyle = '#94a3b8'
-    c.lineWidth = 1.5
-    c.beginPath()
-    c.moveTo(-13, -7)
-    c.lineTo(-21, -15)
-    c.stroke()
-    c.fillStyle = Math.sin(t * 6) > 0 ? '#22c55e' : '#14532d'
-    c.beginPath()
-    c.arc(-21, -15, 2, 0, TAU)
-    c.fill()
-    c.fillStyle = '#ea580c'
-    c.beginPath()
-    c.ellipse(0, 0, 9, 13, 0, 0, TAU)
-    c.fill()
-    c.fillStyle = '#fde047'
-    c.fillRect(-4, -13, 2.5, 26)
-    c.fillRect(2, -12, 2, 24)
-    drawArms(c, '#9a3412')
-    c.fillStyle = '#facc15'
-    c.beginPath()
-    c.arc(-1, 0, 7.5, 0, TAU)
-    c.fill()
-    c.fillStyle = '#fde047'
-    c.beginPath()
-    c.ellipse(4, 0, 4, 7, 0, -Math.PI / 2, Math.PI / 2)
-    c.fill()
-    c.strokeStyle = '#ca8a04'
-    c.lineWidth = 1.5
-    c.beginPath()
-    c.moveTo(-8, 0)
-    c.lineTo(6, 0)
-    c.stroke()
-    c.fillStyle = '#14b8a6'
-    c.fillRect(5, -4.5, 2.5, 3)
-    c.fillRect(5, 1.5, 2.5, 3)
-    return
-  }
-
-  // Marksman: shaggy ghillie wrap with a wide boonie hat.
-  const greens = ['#4d7c0f', '#365314', '#65a30d']
-  c.lineWidth = 2
-  c.lineCap = 'round'
-  for (let i = 0; i < 16; i++) {
-    const a = (i / 16) * TAU
-    const len = 3 + ((i * 37) % 5)
-    c.strokeStyle = greens[i % 3]
-    c.beginPath()
-    c.moveTo(Math.cos(a) * 8, Math.sin(a) * 11)
-    c.lineTo(Math.cos(a) * (8 + len), Math.sin(a) * (11 + len))
-    c.stroke()
-  }
-  c.fillStyle = '#3f6212'
-  c.beginPath()
-  c.ellipse(0, 0, 10, 14, 0, 0, TAU)
-  c.fill()
-  c.fillStyle = '#365314'
-  for (const [x, y] of [[-5, -7], [2, 6], [-3, 4], [4, -5]]) {
-    c.beginPath()
-    c.arc(x, y, 2.5, 0, TAU)
-    c.fill()
-  }
-  drawArms(c, '#365314')
-  c.fillStyle = '#4d5b2a'
-  c.beginPath()
-  c.arc(-1, 0, 10, 0, TAU)
-  c.fill()
-  c.fillStyle = '#3f4a22'
-  c.beginPath()
-  c.arc(-1, 0, 6.5, 0, TAU)
-  c.fill()
-  c.strokeStyle = '#1c1917'
-  c.lineWidth = 1.5
-  c.stroke()
-  c.strokeStyle = '#65a30d'
-  c.beginPath()
-  c.moveTo(-6, -4)
-  c.lineTo(-10, -9)
-  c.moveTo(-5, 5)
-  c.lineTo(-11, 7)
-  c.stroke()
 }
 
 export function formatClock(seconds: number): string {

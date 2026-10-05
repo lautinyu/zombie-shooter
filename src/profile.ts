@@ -1,6 +1,8 @@
 import type { CharacterId } from './characters'
 import { CHARACTERS } from './characters'
 import { MISSIONS } from './missions'
+import type { SurvivorSkinId } from './survivorSkins'
+import { SURVIVOR_SKINS, isSurvivorSkinId, skinUnlocked } from './survivorSkins'
 import type { TexturePack } from './theme'
 import type { WeaponId } from './weapons'
 import { STARTER_WEAPONS, WEAPONS, weaponById } from './weapons'
@@ -30,6 +32,8 @@ export interface Profile {
   completed: string[]
   /** Chosen render style; null until the intro splash is answered. */
   textures: TexturePack | null
+  /** Locker skin worn by player 1 in campaign missions; null keeps the survivor's own outfit. */
+  skin: SurvivorSkinId | null
 }
 
 /** The Chapter 4 finale: clearing it opens New Game+. */
@@ -37,6 +41,17 @@ export const FINAL_MISSION_ID = 'ch4-8'
 
 export function ngPlusUnlocked(profile: Profile): boolean {
   return profile.completed.includes(FINAL_MISSION_ID)
+}
+
+/** Story missions cleared, ignoring the New Game+ ship scenes. */
+export function campaignCleared(profile: Profile): number {
+  return profile.completed.filter((id) => !id.startsWith('ng-')).length
+}
+
+export function unlockedSkins(profile: Profile): SurvivorSkinId[] {
+  const cleared = campaignCleared(profile)
+  const ngPlus = ngPlusUnlocked(profile)
+  return SURVIVOR_SKINS.filter((s) => skinUnlocked(s, cleared, ngPlus)).map((s) => s.id)
 }
 
 /** Wipes the save entirely: progress, weapons, currency and survivors. */
@@ -65,6 +80,7 @@ const DEFAULT_PROFILE: Profile = {
   players: 1,
   completed: [],
   textures: null,
+  skin: null,
 }
 
 function isWeaponId(value: unknown): value is WeaponId {
@@ -120,6 +136,7 @@ export function loadProfile(): Profile {
       players: record.players === 2 ? 2 : 1,
       completed: Array.isArray(record.completed) ? record.completed.filter(isMissionId) : [],
       textures: isTexturePack(record.textures) ? record.textures : null,
+      skin: isSurvivorSkinId(record.skin) ? record.skin : null,
     }
   } catch {
     return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }

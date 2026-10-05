@@ -27,6 +27,8 @@ import { circleHitsWall, inMud, mapById } from './maps'
 import { extractionField, flowDirection, goalField } from './nav'
 import type { FlowField } from './nav'
 import { drawCharacterSkin } from './skins'
+import type { SurvivorSkinId } from './survivorSkins'
+import { drawSurvivor } from './survivorSkins'
 import { bindInput, clearInput, keysPressed } from './input'
 import { touchAim, touchStick } from './TouchControls'
 import { settings } from './settings'
@@ -1196,6 +1198,8 @@ export class Game {
   private bubbleTimer = 0
   private shake = 0
   private hitPops: HitPop[] = []
+  /** Locker skin for player 1; null draws the survivor's own outfit. */
+  private skin: SurvivorSkinId | null = null
   /** Seconds of eased camera motion left after the cinematic hands back. */
   private cameraEase = 0
 
@@ -1392,6 +1396,10 @@ export class Game {
    * Boss missions load frozen so the pre-fight dialogue plays over the arena;
    * `resume()` unfreezes them and rolls straight into the reveal.
    */
+  setSkin(skin: SurvivorSkinId | null) {
+    this.skin = skin
+  }
+
   startMission(
     mission: Mission,
     loadout: Weapon[],
@@ -7225,8 +7233,23 @@ export class Game {
     }
     ctx.restore()
 
-    drawCharacterSkin(ctx, p.character.id, p.r, p.angle, p.hurtCooldown > 0)
-    this.drawPlayerHands(p, kick)
+    if (p.id === 1 && this.skin) {
+      ctx.save()
+      ctx.rotate(p.angle)
+      const scale = p.r / 14
+      ctx.scale(scale, scale)
+      drawSurvivor(ctx, this.skin, (p.x + p.y) * 0.09, this.last / 1000)
+      ctx.restore()
+      if (p.hurtCooldown > 0) {
+        ctx.beginPath()
+        ctx.arc(0, 0, p.r, 0, Math.PI * 2)
+        ctx.fillStyle = 'rgba(255,80,80,0.45)'
+        ctx.fill()
+      }
+    } else {
+      drawCharacterSkin(ctx, p.character.id, p.r, p.angle, p.hurtCooldown > 0)
+      this.drawPlayerHands(p, kick)
+    }
 
     if (this.players.length > 1) {
       ctx.fillStyle = p.id === 1 ? '#34d399' : '#60a5fa'
