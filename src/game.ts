@@ -19,7 +19,9 @@ import {
 } from './missions'
 import { CHIPS_PER_KILL, SCRAP_PER_BUG, SCRAP_PER_KILL } from './profile'
 import { CRYO_SLOW, CRYO_SLOW_TIME, MAX_POISON_STACKS } from './weapons'
-import { playMusic, playSfx, playShot } from './audio'
+import { playMusic, playReload, playSfx, playShot, reloadKind } from './audio'
+import type { WeaponModId } from './weaponMods'
+import { EXTENDED_MAG_SCALE, LASER_SPREAD_SCALE, drawWeaponDrop, modNames, rollWeaponMods } from './weaponMods'
 import type { TexturePack } from './theme'
 import { BUILDING_HEIGHT, MAX_BUILDING_LIFT, UNIT_LIFT } from './theme'
 import type { GameMap, Rect } from './maps'
@@ -29,6 +31,10 @@ import type { FlowField } from './nav'
 import { drawCharacterSkin } from './skins'
 import type { SurvivorSkinId } from './survivorSkins'
 import { drawSurvivor } from './survivorSkins'
+import type { LiveWireSpec } from './maps'
+import type { CombatStats } from './combatSummary'
+import { emptyCombatStats } from './combatSummary'
+import { Heartbeat, drawLowHealthVignette, lowHealthSeverity } from './lowHealth'
 import { bindInput, clearInput, keysPressed } from './input'
 import { touchAim, touchStick } from './TouchControls'
 import { settings } from './settings'
@@ -142,6 +148,21 @@ interface Enemy {
   stun: number
   /** Seconds left of a cryo bullet's movement slow. */
   slow: number
+}
+
+/** An NG+ bulkhead door, solid until a player hacks its panel. */
+interface SecurityDoor {
+  rect: Rect
+  /** 0→1 while a player holds interact at the door panel. */
+  progress: number
+  open: boolean
+  pulse: number
+}
+
+/** NG+ live floor wiring, dead once its junction box is hacked. */
+interface LiveWire extends LiveWireSpec {
+  progress: number
+  live: boolean
 }
 
 /** The alien deck terminal that opens the next scene on 'ufo' missions. */
@@ -493,6 +514,10 @@ interface Bullet {
   hit: Set<Enemy>
   /** Who fired it, so Crucible lifesteal knows where to send the health. */
   owner: Player | null
+  /** Already counted as a hit for the accuracy tally. */
+  scored: boolean
+  /** Incendiary attachment: every enemy it hits catches fire. */
+  incendiary?: boolean
   maxLife: number
   falloff: number
   tracerLength: number
@@ -518,6 +543,32 @@ interface AmmoBox {
   y: number
   amount: number
 }
+
+/** An NG+ weapon drop: a copy of a carried gun, maybe with attachments. */
+interface WeaponDrop {
+  x: number
+  y: number
+  weaponId: string
+  name: string
+  mods: WeaponModId[]
+  life: number
+}
+
+/** A loose bundle of scrap left by a kill, banked when walked over. */
+interface ScrapDrop {
+  x: number
+  y: number
+  amount: number
+  life: number
+}
+
+/** Odds an NG+ kill drops a weapon; ship guards carry better kit. */
+const WEAPON_DROP_CHANCE = 0.045
+const WEAPON_DROP_CHANCE_GUARD = 0.14
+const WEAPON_DROP_LIFE = 30
+const SCRAP_DROP_CHANCE = 0.06
+const SCRAP_DROP_AMOUNT = 10
+const SCRAP_DROP_LIFE = 25
 
 export interface HudSurvivor {
   hp: number
@@ -871,6 +922,15 @@ const SHARD_DAMAGE = 11
 const CRYO_REGEN_SPEED = 1.25
 const CRYO_REGEN_BANNER = '⚠️ CRYO-STALKER REGENERATED! PHASE 2 START'
 const BANNER_TIME = 3.2
+/** Seconds of held interact to override a security door panel. */
+const DOOR_HACK_TIME = 2.5
+/** Seconds of held interact to trip a junction box and kill its wires. */
+const JUNCTION_HACK_TIME = 1.5
+/** Reach from a player's edge to a door panel or junction box. */
+const HACK_RANGE = 60
+/** Damage per jolt from a live wire, and the gap between jolts. */
+const WIRE_DAMAGE = 9
+const WIRE_TICK = 0.35
 /** Seconds the white-out flash takes to fade after a banner fires. */
 const FLASH_TIME = 0.6
 /**
@@ -1109,6 +1169,8 @@ export class Game {
   private enemies: Enemy[] = []
   private bullets: Bullet[] = []
   private ammoBoxes: AmmoBox[] = []
+  private weaponDrops: WeaponDrop[] = []
+  private scrapDrops: ScrapDrop[] = []
   private survivors: Survivor[] = []
   private turrets: Turret[] = []
   private medkits: Medkit[] = []
@@ -1198,6 +1260,13 @@ export class Game {
   private bubbleTimer = 0
   private shake = 0
   private hitPops: HitPop[] = []
+  private stats: CombatStats = emptyCombatStats()
+  private heartbeat = new Heartbeat()
+  /** Seconds of play, driving the low-health vignette pulse. */
+  private vitalClock = 0
+  private doors: SecurityDoor[] = []
+  private wires: LiveWire[] = []
+  private hackBeep = 0
   /** Locker skin for player 1; null draws the survivor's own outfit. */
   private skin: SurvivorSkinId | null = null
   /** Seconds of eased camera motion left after the cinematic hands back. */
@@ -1400,6 +1469,11 @@ export class Game {
     this.skin = skin
   }
 
+  /** End-of-run combat tallies for the summary screen. */
+  combatStats(): CombatStats {
+    return { ...this.stats, kills: this.kills }
+  }
+
   startMission(
     mission: Mission,
     loadout: Weapon[],
@@ -1411,7 +1485,17 @@ export class Game {
     this.weapon = loadout[0]
     this.character = characters[0]
     // Only the mission's own map is instantiated — other maps never load.
-    this.map = mapById(mission.map)
+    const baseMap = mapById(mission.map)
+    this.doors = mission.ngPlus
+      ? (baseMap.securityDoors ?? []).map((r) => ({ rect: { ...r, kind: 'barrier' as const }, progress: 0, open: false, pulse: 0 }))
+      : []
+    this.wires = mission.ngPlus
+      ? (baseMap.liveWires ?? []).map((w) => ({ ...w, box: { ...w.box }, progress: 0, live: true }))
+      : []
+    this.map = this.doors.length ? { ...baseMap, doors: this.doors.map((d) => d.rect) } : baseMap
+    this.stats = emptyCombatStats()
+    this.heartbeat.reset()
+    this.vitalClock = 0
     this.kills = 0
     this.scrapEarned = 0
     this.chipsEarned = 0
@@ -1428,6 +1512,8 @@ export class Game {
     this.enemies = []
     this.bullets = []
     this.ammoBoxes = []
+    this.weaponDrops = []
+    this.scrapDrops = []
     this.turrets = []
     this.medkits = []
     this.medkitTimer = 0
@@ -1943,6 +2029,8 @@ export class Game {
     this.updateCrates(dt)
     this.updateRace()
     this.updateTerminal(dt)
+    this.updateNgHacks(dt)
+    this.updateVitals(dt)
     this.updateArena(dt)
     this.updateMutation(dt)
     if (this.generator) this.generator.hurt = Math.max(0, this.generator.hurt - dt)
@@ -2190,6 +2278,100 @@ export class Game {
     } else {
       t.progress = Math.max(0, t.progress - dt * 0.4)
     }
+  }
+
+  /**
+   * NG+ hacking: hold interact at a door panel to unseal it, or at a junction
+   * box to kill its floor wires. Live wires jolt any player standing on them.
+   */
+  private updateNgHacks(dt: number) {
+    if (!this.doors.length && !this.wires.length) return
+    let hacking = false
+    for (const door of this.doors) {
+      if (door.open) continue
+      door.pulse += dt
+      const hacker = this.alivePlayers.some((p) => this.nearDoor(p, door) && this.holdingRetrieve(p))
+      if (!hacker) {
+        door.progress = Math.max(0, door.progress - dt / DOOR_HACK_TIME)
+        continue
+      }
+      hacking = true
+      door.progress += dt / DOOR_HACK_TIME
+      if (door.progress < 1) continue
+      door.progress = 1
+      door.open = true
+      this.map.doors = this.doors.filter((d) => !d.open).map((d) => d.rect)
+      this.banner = 'Security door unlocked'
+      this.bannerTimer = 2.5
+      playSfx('overdrive')
+    }
+    for (const wire of this.wires) {
+      if (!wire.live) continue
+      const hacker = this.alivePlayers.some((p) => this.nearJunction(p, wire) && this.holdingRetrieve(p))
+      if (hacker) {
+        hacking = true
+        wire.progress += dt / JUNCTION_HACK_TIME
+        if (wire.progress >= 1) {
+          wire.progress = 1
+          wire.live = false
+          this.banner = 'Junction box hacked — wires dead'
+          this.bannerTimer = 2.5
+          playSfx('cloak')
+          continue
+        }
+      } else {
+        wire.progress = Math.max(0, wire.progress - dt / JUNCTION_HACK_TIME)
+      }
+      for (const p of this.alivePlayers) {
+        if (p.hurtCooldown > 0) continue
+        const nx = clamp(p.x, wire.x, wire.x + wire.w)
+        const ny = clamp(p.y, wire.y, wire.y + wire.h)
+        if (Math.hypot(p.x - nx, p.y - ny) >= p.r) continue
+        this.damagePlayer(p, WIRE_DAMAGE)
+        p.hurtCooldown = WIRE_TICK
+        playSfx('sting')
+        for (let k = 0; k < 5; k++) {
+          const a = Math.random() * Math.PI * 2
+          const speed = 80 + Math.random() * 160
+          this.gibs.push({
+            x: p.x,
+            y: p.y,
+            vx: Math.cos(a) * speed,
+            vy: Math.sin(a) * speed,
+            r: 2 + Math.random() * 2,
+            life: 1,
+            decay: 2.4,
+            color: Math.random() < 0.5 ? '#fde047' : '#67e8f9',
+          })
+        }
+      }
+    }
+    this.hackBeep -= dt
+    if (hacking && this.hackBeep <= 0) {
+      playSfx('hack')
+      this.hackBeep = 0.22
+    }
+  }
+
+  private nearDoor(p: Player, door: SecurityDoor): boolean {
+    const r = door.rect
+    const nx = clamp(p.x, r.x, r.x + r.w)
+    const ny = clamp(p.y, r.y, r.y + r.h)
+    return Math.hypot(p.x - nx, p.y - ny) < p.r + HACK_RANGE
+  }
+
+  private nearJunction(p: Player, wire: LiveWire): boolean {
+    return Math.hypot(p.x - wire.box.x, p.y - wire.box.y) < p.r + HACK_RANGE
+  }
+
+  /** The weakest standing player's danger level drives the vignette and heartbeat. */
+  private get lowHealthLevel(): number {
+    return this.alivePlayers.reduce((worst, p) => Math.max(worst, lowHealthSeverity(p.hp, p.maxHp)), 0)
+  }
+
+  private updateVitals(dt: number) {
+    this.vitalClock += dt
+    this.heartbeat.update(dt, this.lowHealthLevel)
   }
 
   /** The valley run ends the moment anyone stands in the escape hatch. */
@@ -2634,7 +2816,7 @@ export class Game {
   /** True when the rect overlaps a structure or leaves the map. */
   private rectBlocked(x: number, y: number, w: number, h: number): boolean {
     if (x < 0 || y < 0 || x + w > this.map.width || y + h > this.map.height) return true
-    return this.map.walls.some(
+    return [...this.map.walls, ...(this.map.doors ?? [])].some(
       (s) => x < s.x + s.w && x + w > s.x && y < s.y + s.h && y + h > s.y
     )
   }
@@ -2889,6 +3071,7 @@ export class Game {
     if (this.state !== 'playing' || !p || p.down || p.weapon.infiniteAmmo) return
     if (p.reloadTimer > 0 || p.mag === p.weapon.magSize || p.reserve <= 0) return
     p.reloadTimer = p.weapon.reloadTime * p.character.reloadMultiplier * this.arenaReloadScale
+    playReload(reloadKind(p.weapon), 'start')
   }
 
   private updateWeapon(p: Player, dt: number) {
@@ -2901,6 +3084,7 @@ export class Game {
         p.mag += take
         p.reserve -= take
         p.reloadTimer = 0
+        playReload(reloadKind(p.weapon), 'end')
       }
       return
     }
@@ -2949,6 +3133,7 @@ export class Game {
     const w = p.weapon
     p.shotsFired += 1
     if (w.melee) {
+      this.stats.shots += 1
       this.swingMelee(p, w.melee)
       return
     }
@@ -2998,8 +3183,11 @@ export class Game {
         width: acidShot || cryoShot ? w.tracerWidth + 1 : w.tracerWidth,
         hit: new Set<Enemy>(),
         owner: p,
+        scored: false,
+        incendiary: w.attachments?.includes('incendiary'),
       })
     }
+    this.stats.shots += w.pellets
     if (!w.infiniteAmmo) p.mag -= 1
     p.recoil = 1
     if (HEAVY_WEAPONS.has(w.id)) this.shake = Math.max(this.shake, 0.4)
@@ -3048,8 +3236,10 @@ export class Game {
       // Wide targets are forgiving: their radius widens the angular window.
       const half = MELEE_BLADE_HALF + Math.atan2(e.r, Math.max(d, 1))
       if (Math.abs(angleDelta(to, blade)) > half) continue
+      if (!p.swingHits.length && !p.swingHitBoss) this.stats.hits += 1
       p.swingHits.push(e)
       e.hp -= damage * this.enemyArmour
+      this.stats.damage += damage * this.enemyArmour
       this.popHit(e.x, e.y - e.r, damage * this.enemyArmour)
       this.moveEnemy(e, Math.cos(to) * melee.knockback, Math.sin(to) * melee.knockback)
       if (melee.stunChance > 0 && Math.random() < melee.stunChance) e.stun = melee.stunTime
@@ -3062,8 +3252,10 @@ export class Game {
       const to = Math.atan2(boss.y - p.y, boss.x - p.x)
       const half = MELEE_BLADE_HALF + Math.atan2(boss.r, Math.max(d, 1))
       if (d <= p.r + melee.reach + boss.r && Math.abs(angleDelta(to, blade)) <= half) {
+        if (!p.swingHits.length) this.stats.hits += 1
         p.swingHitBoss = true
         boss.hp -= damage
+        this.stats.damage += damage
         this.popHit(boss.x, boss.y - boss.r, damage)
         boss.hurt = 0.12
         this.checkBossPhase(boss)
@@ -3132,6 +3324,7 @@ export class Game {
       width: 2,
       hit: new Set<Enemy>(),
       owner: null,
+      scored: false,
     })
   }
 
@@ -3151,7 +3344,10 @@ export class Game {
         const travelled = 1 - b.life / b.maxLife
         const dealt = b.damage * (1 - (1 - b.falloff) * travelled)
         boss.hp -= dealt
-        if (b.owner) this.popHit(b.x, b.y, dealt)
+        if (b.owner) {
+          this.popHit(b.x, b.y, dealt)
+          this.scoreHit(b, dealt, segmentDistance(boss.x, boss.y, px, py, b.x, b.y) < boss.r * 0.3)
+        }
         this.arenaOnHit(b, dealt, b.x, b.y, null)
         if (b.blast > 0) dead = true
         boss.hurt = 0.12
@@ -3198,7 +3394,10 @@ export class Game {
           const armour = b.ignoreArmour ? 1 : this.enemyArmour
           const dealt = b.damage * (1 - (1 - b.falloff) * travelled) * armour
           e.hp -= dealt
-          if (b.owner) this.popHit(b.x, b.y, dealt)
+          if (b.owner) {
+            this.popHit(b.x, b.y, dealt)
+            this.scoreHit(b, dealt, segmentDistance(e.x, e.y, px, py, b.x, b.y) < e.r * 0.4)
+          }
           this.arenaOnHit(b, dealt, e.x, e.y, e)
           if (b.poison) {
             e.poison = POISON_DURATION
@@ -3207,7 +3406,8 @@ export class Game {
           }
           if (b.cryo) e.slow = CRYO_SLOW_TIME
           if (b.ignite && e.kind === 'bug' && Math.random() < IGNITE_CHANCE) e.burn = BURN_DURATION
-          if (e.hp <= 0) this.killEnemy(j)
+          if (b.incendiary) e.burn = Math.max(e.burn, BURN_DURATION)
+          if (e.hp <= 0) this.killEnemy(j, !b.owner)
           if (b.blast > 0) {
             dead = true
             break
@@ -3225,6 +3425,15 @@ export class Game {
     }
   }
 
+  /** Player rounds feed the accuracy, damage and headshot tallies; a round scores one hit at most. */
+  private scoreHit(b: Bullet, dealt: number, headshot: boolean) {
+    this.stats.damage += dealt
+    if (b.scored) return
+    b.scored = true
+    this.stats.hits += 1
+    if (headshot) this.stats.crits += 1
+  }
+
   /** Cryo canister: damages the group it lands in and freezes it solid. */
   private detonate(b: Bullet) {
     this.blasts.push({ x: b.x, y: b.y, r: b.blast, life: BLAST_LIFE, maxLife: BLAST_LIFE })
@@ -3233,6 +3442,7 @@ export class Game {
       const e = this.enemies[i]
       if (Math.hypot(e.x - b.x, e.y - b.y) > b.blast + e.r) continue
       e.hp -= b.damage * this.enemyArmour
+      if (b.owner) this.stats.damage += b.damage * this.enemyArmour
       e.stun = Math.max(e.stun, b.blastFreeze)
       e.slow = CRYO_SLOW_TIME
       if (e.hp <= 0) this.killEnemy(i)
@@ -3320,10 +3530,11 @@ export class Game {
     }
   }
 
-  private killEnemy(index: number) {
+  private killEnemy(index: number, byAbility = false) {
     const z = this.enemies[index]
     this.enemies.splice(index, 1)
     this.kills += 1
+    if (byAbility) this.stats.abilityKills += 1
     this.scrapEarned += z.kind === 'bug' ? SCRAP_PER_BUG : SCRAP_PER_KILL
     // Cold-weather mutations are the only source of chips outside missions.
     if (this.mission?.chapter === 2) this.chipsEarned += CHIPS_PER_KILL
@@ -3342,6 +3553,56 @@ export class Game {
     if (Math.random() < dropChance) {
       this.ammoBoxes.push({ x: z.x, y: z.y, amount: AMMO_DROP_AMOUNT })
     }
+    if (Math.random() < SCRAP_DROP_CHANCE) {
+      this.scrapDrops.push({ x: z.x + 10, y: z.y - 6, amount: SCRAP_DROP_AMOUNT, life: SCRAP_DROP_LIFE })
+    }
+    if (this.mission?.ngPlus) {
+      const chance = z.kind === 'guard' ? WEAPON_DROP_CHANCE_GUARD : WEAPON_DROP_CHANCE
+      if (Math.random() < chance) this.dropWeapon(z.x, z.y)
+    }
+  }
+
+  /** Leaves a copy of a gun someone is carrying, rolled for attachments. */
+  private dropWeapon(x: number, y: number) {
+    const guns = this.alivePlayers.flatMap((p) => p.slots.map((s) => s.weapon)).filter((w) => !w.melee)
+    if (!guns.length) return
+    const gun = guns[Math.floor(Math.random() * guns.length)]
+    this.weaponDrops.push({ x, y, weaponId: gun.id, name: gun.name, mods: rollWeaponMods(), life: WEAPON_DROP_LIFE })
+  }
+
+  /**
+   * Picking up a drop refills the matching gun (or the one in hand) and bolts
+   * on any attachments it doesn't already carry.
+   */
+  private takeWeaponDrop(p: Player, drop: WeaponDrop) {
+    p.slots[p.slotIndex].mag = p.mag
+    p.slots[p.slotIndex].reserve = p.reserve
+    let index = p.slots.findIndex((s) => s.weapon.id === drop.weaponId)
+    if (index < 0) index = p.slots.findIndex((s, i) => i === p.slotIndex && !s.weapon.melee)
+    if (index < 0) index = p.slots.findIndex((s) => !s.weapon.melee)
+    if (index < 0) return
+    const slot = p.slots[index]
+    const base = slot.weapon
+    const have = base.attachments ?? []
+    const fresh = drop.mods.filter((m) => !have.includes(m))
+    const weapon = {
+      ...base,
+      attachments: [...have, ...fresh],
+      magSize: fresh.includes('extended') ? Math.round(base.magSize * EXTENDED_MAG_SCALE) : base.magSize,
+      spread: fresh.includes('laser') ? base.spread * LASER_SPREAD_SCALE : base.spread,
+    }
+    slot.weapon = weapon
+    slot.mag = weapon.magSize
+    if (!weapon.infiniteAmmo) slot.reserve += weapon.magSize * 2
+    if (index === p.slotIndex) {
+      p.weapon = weapon
+      p.mag = slot.mag
+      p.reserve = slot.reserve
+      p.reloadTimer = 0
+    }
+    this.banner = fresh.length ? `${modNames(fresh)} — ${weapon.name}` : `${weapon.name} restocked`
+    this.bannerTimer = 2.2
+    playSfx(fresh.length ? 'pickup-weapon' : 'pickup-ammo')
   }
 
   /**
@@ -4452,7 +4713,7 @@ export class Game {
       a.recoil = 1
       const index = this.enemies.indexOf(target)
       target.hp -= ALLY_DAMAGE
-      if (target.hp <= 0 && index >= 0) this.killEnemy(index)
+      if (target.hp <= 0 && index >= 0) this.killEnemy(index, true)
       playSfx('turret')
     })
   }
@@ -4489,7 +4750,9 @@ export class Game {
     const stacks = this.arenaPerks.crit
     if (stacks <= 0) return 1
     const chance = Math.min(1, ARENA_CRIT_CHANCE * stacks)
-    return Math.random() < chance ? 1 + ARENA_CRIT_BONUS : 1
+    if (Math.random() >= chance) return 1
+    this.stats.crits += 1
+    return 1 + ARENA_CRIT_BONUS
   }
 
   /**
@@ -4541,7 +4804,27 @@ export class Game {
       if (taker) {
         taker.reserve += a.amount
         this.ammoBoxes.splice(i, 1)
+        playSfx('pickup-ammo')
       }
+    }
+
+    for (let i = this.scrapDrops.length - 1; i >= 0; i--) {
+      const drop = this.scrapDrops[i]
+      drop.life -= dt
+      const taker = this.alivePlayers.find((p) => Math.hypot(drop.x - p.x, drop.y - p.y) < p.r + 14)
+      if (taker) {
+        this.scrapEarned += drop.amount
+        playSfx('pickup-scrap')
+      }
+      if (taker || drop.life <= 0) this.scrapDrops.splice(i, 1)
+    }
+
+    for (let i = this.weaponDrops.length - 1; i >= 0; i--) {
+      const drop = this.weaponDrops[i]
+      drop.life -= dt
+      const taker = this.alivePlayers.find((p) => Math.hypot(drop.x - p.x, drop.y - p.y) < p.r + 16)
+      if (taker) this.takeWeaponDrop(taker, drop)
+      if (taker || drop.life <= 0) this.weaponDrops.splice(i, 1)
     }
 
     this.updateMedkitDrops(dt)
@@ -4932,10 +5215,12 @@ export class Game {
     const mode = this.mission?.type
     if (mode === 'protect' || mode === 'race' || mode === 'rail') this.drawExtraction()
 
+    for (const wire of this.wires) this.drawLiveWire(wire)
     for (const w of m.walls) {
       if (this.textures === 'enhanced') this.drawStructure3D(w)
       else this.drawStructure(w)
     }
+    for (const door of this.doors) this.drawSecurityDoor(door)
 
     for (const a of this.ammoBoxes) {
       ctx.fillStyle = '#f4c542'
@@ -4944,6 +5229,8 @@ export class Game {
       ctx.lineWidth = 2
       ctx.strokeRect(a.x - 8, a.y - 6, 16, 12)
     }
+    for (const drop of this.scrapDrops) this.drawScrapDrop(drop)
+    for (const drop of this.weaponDrops) this.drawWeaponDropLabel(drop)
 
     for (const kit of this.medkits) this.drawMedkit(kit)
     for (const a of this.allies) this.drawAlly(a)
@@ -5002,6 +5289,7 @@ export class Game {
     }
     if (this.bubbleTimer > 0) this.drawRevealBubble()
     for (const crate of this.crates) this.drawCratePrompt(crate)
+    this.drawHackPrompts()
     ctx.restore()
 
     this.drawVisibility()
@@ -5011,6 +5299,7 @@ export class Game {
       this.drawHitPops()
       ctx.restore()
     }
+    drawLowHealthVignette(ctx, this.viewW, this.viewH, this.vitalClock, this.lowHealthLevel)
     this.drawFlash()
     this.drawCrosshair()
     this.drawMinimap()
@@ -6574,6 +6863,212 @@ export class Game {
     ctx.restore()
   }
 
+  /** Bolts and plate offcuts in a small pile, blinking before they rust away. */
+  private drawScrapDrop(drop: ScrapDrop) {
+    const ctx = this.ctx
+    if (drop.life < 4 && Math.floor(drop.life * 8) % 2 === 0) return
+    ctx.save()
+    ctx.translate(drop.x, drop.y)
+    ctx.fillStyle = '#78716c'
+    ctx.fillRect(-7, -2, 9, 6)
+    ctx.fillStyle = '#a8a29e'
+    ctx.fillRect(-1, -5, 8, 5)
+    ctx.fillStyle = '#d6d3d1'
+    ctx.beginPath()
+    ctx.arc(-3, -4, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+
+  private drawWeaponDropLabel(drop: WeaponDrop) {
+    const ctx = this.ctx
+    const t = this.last / 1000
+    drawWeaponDrop(ctx, drop.x, drop.y, t, drop.mods, drop.life < 5)
+    ctx.save()
+    ctx.font = 'bold 10px ui-sans-serif, system-ui, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillStyle = drop.mods.length ? '#fde68a' : '#cbd5e1'
+    ctx.fillText(drop.name, drop.x, drop.y - 24)
+    if (drop.mods.length) {
+      ctx.fillStyle = '#fdba74'
+      ctx.fillText(modNames(drop.mods), drop.x, drop.y - 36)
+    }
+    ctx.restore()
+  }
+
+  /** A sealed NG+ door: hazard-striped plate, red lock and hack progress ring. */
+  private drawSecurityDoor(door: SecurityDoor) {
+    const ctx = this.ctx
+    const r = door.rect
+    ctx.save()
+    if (door.open) {
+      ctx.fillStyle = 'rgba(34,197,94,0.18)'
+      ctx.fillRect(r.x, r.y, r.w, r.h)
+      ctx.strokeStyle = 'rgba(74,222,128,0.5)'
+      ctx.lineWidth = 2
+      ctx.strokeRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2)
+      ctx.restore()
+      return
+    }
+    ctx.fillStyle = '#1c1830'
+    ctx.fillRect(r.x, r.y, r.w, r.h)
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(r.x, r.y, r.w, r.h)
+    ctx.clip()
+    ctx.strokeStyle = 'rgba(250,204,21,0.45)'
+    ctx.lineWidth = 8
+    const span = Math.min(r.w, r.h)
+    for (let k = -span; k < r.w + r.h; k += 26) {
+      ctx.beginPath()
+      ctx.moveTo(r.x + k, r.y)
+      ctx.lineTo(r.x + k - span, r.y + span * (r.h / span))
+      ctx.stroke()
+    }
+    ctx.restore()
+    const glow = 0.55 + 0.45 * Math.sin(door.pulse * 4)
+    ctx.strokeStyle = `rgba(239,68,68,${glow})`
+    ctx.lineWidth = 3
+    ctx.strokeRect(r.x + 1.5, r.y + 1.5, r.w - 3, r.h - 3)
+    const cx = r.x + r.w / 2
+    const cy = r.y + r.h / 2
+    ctx.fillStyle = '#0f172a'
+    ctx.beginPath()
+    ctx.arc(cx, cy, 16, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.strokeStyle = '#ef4444'
+    ctx.lineWidth = 2.5
+    ctx.stroke()
+    ctx.beginPath()
+    ctx.arc(cx, cy - 3, 4.5, Math.PI, 0)
+    ctx.stroke()
+    ctx.fillStyle = '#ef4444'
+    ctx.fillRect(cx - 6, cy - 2, 12, 9)
+    if (door.progress > 0) {
+      ctx.strokeStyle = '#22d3ee'
+      ctx.lineWidth = 4
+      ctx.beginPath()
+      ctx.arc(cx, cy, 22, -Math.PI / 2, -Math.PI / 2 + door.progress * Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
+
+  /** Crackling floor cables and the junction box that powers them. */
+  private drawLiveWire(wire: LiveWire) {
+    const ctx = this.ctx
+    ctx.save()
+    ctx.fillStyle = wire.live ? 'rgba(250,204,21,0.08)' : 'rgba(15,23,42,0.3)'
+    ctx.fillRect(wire.x, wire.y, wire.w, wire.h)
+    const horizontal = wire.w >= wire.h
+    const length = horizontal ? wire.w : wire.h
+    const across = horizontal ? wire.h : wire.w
+    const steps = Math.max(2, Math.round(length / 14))
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    for (let s = 0; s < 3; s++) {
+      const lane = across * ((s + 1) / 4)
+      ctx.beginPath()
+      for (let i = 0; i <= steps; i++) {
+        const along = (i / steps) * length
+        const jitter = wire.live ? (Math.random() - 0.5) * 9 : (i % 2 ? 2 : -2)
+        const x = horizontal ? wire.x + along : wire.x + lane + jitter
+        const y = horizontal ? wire.y + lane + jitter : wire.y + along
+        if (i === 0) ctx.moveTo(x, y)
+        else ctx.lineTo(x, y)
+      }
+      if (wire.live) {
+        ctx.strokeStyle = s === 1 ? 'rgba(103,232,249,0.9)' : 'rgba(253,224,71,0.85)'
+        ctx.lineWidth = 2.5
+        ctx.shadowColor = '#fde047'
+        ctx.shadowBlur = 10
+      } else {
+        ctx.strokeStyle = '#475569'
+        ctx.lineWidth = 2
+        ctx.shadowBlur = 0
+      }
+      ctx.stroke()
+    }
+    ctx.shadowBlur = 0
+    const bx = wire.box.x
+    const by = wire.box.y
+    const tx = clamp(bx, wire.x, wire.x + wire.w)
+    const ty = clamp(by, wire.y, wire.y + wire.h)
+    ctx.setLineDash([6, 5])
+    ctx.strokeStyle = wire.live ? 'rgba(250,204,21,0.55)' : 'rgba(100,116,139,0.6)'
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.moveTo(bx, by)
+    ctx.lineTo(tx, ty)
+    ctx.stroke()
+    ctx.setLineDash([])
+    ctx.fillStyle = '#1e293b'
+    ctx.fillRect(bx - 14, by - 16, 28, 32)
+    ctx.strokeStyle = wire.live ? '#facc15' : '#64748b'
+    ctx.lineWidth = 2
+    ctx.strokeRect(bx - 14, by - 16, 28, 32)
+    ctx.fillStyle = wire.live ? '#facc15' : '#475569'
+    ctx.beginPath()
+    ctx.moveTo(bx + 2, by - 11)
+    ctx.lineTo(bx - 6, by + 2)
+    ctx.lineTo(bx - 1, by + 2)
+    ctx.lineTo(bx - 3, by + 11)
+    ctx.lineTo(bx + 6, by - 3)
+    ctx.lineTo(bx + 1, by - 3)
+    ctx.closePath()
+    ctx.fill()
+    const blink = wire.live ? (Math.sin(this.vitalClock * 8) > 0 ? '#ef4444' : '#7f1d1d') : '#22c55e'
+    ctx.fillStyle = blink
+    ctx.beginPath()
+    ctx.arc(bx + 9, by - 11, 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    if (wire.live && wire.progress > 0) {
+      ctx.strokeStyle = '#22d3ee'
+      ctx.lineWidth = 4
+      ctx.beginPath()
+      ctx.arc(bx, by, 26, -Math.PI / 2, -Math.PI / 2 + wire.progress * Math.PI * 2)
+      ctx.stroke()
+    }
+    ctx.restore()
+  }
+
+  /** "[Hold E to Hack]" over any door panel or junction box a player is standing at. */
+  private drawHackPrompts() {
+    const spots: { x: number; y: number; players: Player[] }[] = []
+    for (const door of this.doors) {
+      if (door.open) continue
+      const players = this.alivePlayers.filter((p) => this.nearDoor(p, door))
+      if (players.length) spots.push({ x: door.rect.x + door.rect.w / 2, y: door.rect.y - 8, players })
+    }
+    for (const wire of this.wires) {
+      if (!wire.live) continue
+      const players = this.alivePlayers.filter((p) => this.nearJunction(p, wire))
+      if (players.length) spots.push({ x: wire.box.x, y: wire.box.y - 30, players })
+    }
+    if (!spots.length) return
+    const ctx = this.ctx
+    ctx.save()
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.font = 'bold 16px ui-sans-serif, system-ui, sans-serif'
+    for (const spot of spots) {
+      let y = spot.y - 14
+      for (const p of spot.players) {
+        const text = p.id === 1 ? '[Hold E to Hack]' : '[Hold M to Hack]'
+        const w = ctx.measureText(text).width + 18
+        ctx.fillStyle = 'rgba(6,12,24,0.8)'
+        ctx.fillRect(spot.x - w / 2, y - 13, w, 26)
+        ctx.strokeStyle = 'rgba(34,211,238,0.75)'
+        ctx.lineWidth = 2
+        ctx.strokeRect(spot.x - w / 2, y - 13, w, 26)
+        ctx.fillStyle = '#cffafe'
+        ctx.fillText(text, spot.x, y)
+        y -= 30
+      }
+    }
+    ctx.restore()
+  }
+
   private drawSurvivor(s: Survivor) {
     const ctx = this.ctx
     ctx.beginPath()
@@ -7228,6 +7723,18 @@ export class Game {
       ctx.fillRect(p.r - 6, -4, 8, 8)
       ctx.restore()
     } else {
+      if (p.weapon.attachments?.includes('laser') && !p.down) {
+        ctx.strokeStyle = 'rgba(239,68,68,0.55)'
+        ctx.lineWidth = 1.5
+        ctx.beginPath()
+        ctx.moveTo(p.r + 18, 0)
+        ctx.lineTo(p.r + 300, 0)
+        ctx.stroke()
+        ctx.fillStyle = 'rgba(248,113,113,0.9)'
+        ctx.beginPath()
+        ctx.arc(p.r + 300, 0, 2.5, 0, Math.PI * 2)
+        ctx.fill()
+      }
       ctx.fillStyle = '#e5e7eb'
       ctx.fillRect(p.r - 4 - kick, -4, 22, 8)
     }

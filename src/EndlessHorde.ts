@@ -8,7 +8,22 @@
  * touch); only the Technician's deployed drone picks its own targets.
  */
 
-import { playMusic, playSfx, stopMusic } from './audio'
+import { playMusic, playReload, playSfx, stopMusic } from './audio'
+import type { ReloadKind } from './audio'
+import { combatSummaryHtml, emptyCombatStats } from './combatSummary'
+import { Heartbeat, drawLowHealthVignette, lowHealthSeverity } from './lowHealth'
+import type { WeaponModId } from './weaponMods'
+import {
+  EXTENDED_MAG_SCALE,
+  INCENDIARY_DPS_SHARE,
+  INCENDIARY_TIME,
+  LASER_SPREAD_SCALE,
+  WEAPON_MODS,
+  drawWeaponDrop,
+  modIcons,
+  modNames,
+  rollWeaponMods,
+} from './weaponMods'
 import { highScore, recordPlay, submitScore } from './arcadeStats'
 import { submitHordeRun } from './cloud/leaderboard'
 import { drawSurvivor } from './survivorSkins'
@@ -86,6 +101,18 @@ const HEAVY_SHAKE = new Map<WeaponDef, number>([
   [SNIPER, 9],
   [REVOLVER, 5],
 ])
+const RELOAD_KIND = new Map<WeaponDef, ReloadKind>([
+  [AR, 'rifle'],
+  [REVOLVER, 'revolver'],
+  [UZI, 'smg'],
+  [RIFLE, 'rifle'],
+  [SNIPER, 'sniper'],
+  [GLOCK, 'pistol'],
+])
+/** Weapon drop odds per kill type; mini-bosses always drop a modded gun. */
+const DROP_CHANCE: Record<ZombieKind, number> = { walker: 0.012, runner: 0.012, brute: 0.1, miniboss: 1 }
+const DROP_LIFE = 30
+const PICKUP_BANNER_TIME = 2.4
 const CRIT_MULT = 2
 const MAX_CRIT = 0.6
 const MAX_ARMOR = 0.5
@@ -128,6 +155,18 @@ interface Zombie {
   dashVx: number
   dashVy: number
   bossIndex: number
+  /** Seconds of incendiary burn left, and its damage per second. */
+  burn: number
+  burnDps: number
+}
+
+/** A dropped copy of one of the class's guns, maybe with attachments. */
+interface Drop {
+  x: number
+  y: number
+  weapon: number
+  mods: WeaponModId[]
+  life: number
 }
 
 interface Bullet {
@@ -140,6 +179,9 @@ interface Bullet {
   pierce: number
   drone: boolean
   hit: Set<Zombie>
+  incendiary: boolean
+  /** Already counted as a hit for the accuracy tally. */
+  scored: boolean
 }
 
 interface Spark {
@@ -186,6 +228,7 @@ interface WeaponState {
   def: WeaponDef
   ammo: number
   reloading: number
+  mods: WeaponModId[]
 }
 
 /** The equipped weapon, drawn in the survivor's local frame facing +x. */
@@ -369,7 +412,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   frame.appendChild(upgradePanel)
 
   const overPanel = document.createElement('div')
-  overPanel.className = 'absolute inset-3 hidden flex-col items-center justify-center gap-3 rounded-lg bg-black/85 p-4 text-center'
+  overPanel.className = 'absolute inset-3 hidden flex-col items-center justify-center gap-3 overflow-y-auto rounded-lg bg-black/85 p-4 text-center'
   overPanel.innerHTML = `
     <div class="text-3xl font-black uppercase tracking-widest text-red-500 sm:text-4xl">You Were Overrun</div>
     <div class="grid grid-cols-2 gap-3 pt-2 sm:gap-5">
@@ -382,6 +425,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         <div id="horde-over-kills" class="pt-1 font-mono text-4xl font-black text-rose-300">0</div>
       </div>
     </div>
+    <div id="horde-over-summary" class="w-full"></div>
     <div id="horde-over-best" class="text-xs font-bold uppercase tracking-[0.3em] text-amber-300"></div>
     <div id="horde-over-board" class="text-[11px] font-semibold uppercase tracking-[0.25em] text-cyan-300"></div>
     <div class="flex flex-wrap justify-center gap-3 pt-3">
@@ -416,6 +460,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   const overKills = el<HTMLDivElement>('#horde-over-kills')
   const overBest = el<HTMLDivElement>('#horde-over-best')
   const overBoard = el<HTMLDivElement>('#horde-over-board')
+  const overSummary = el<HTMLDivElement>('#horde-over-summary')
   const hudDot = el<HTMLSpanElement>('#horde-dot')
   const hudClass = el<HTMLSpanElement>('#horde-class')
   const hudHp = el<HTMLSpanElement>('#horde-hp')
@@ -469,6 +514,10 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
   let decals: Decal[] = []
   let pops: Pop[] = []
   let offered: Upgrade[] = []
+  let drops: Drop[] = []
+  let pickupBanner = { text: '', life: 0 }
+  const stats = emptyCombatStats()
+  const heartbeat = new Heartbeat()
 
   const held = new Set<string>()
   let pointer = { x: VIEW_W / 2 + 100, y: VIEW_H / 2 }
@@ -481,7 +530,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
 
   const cam = { x: 0, y: 0 }
 
-  const magSize = (w: WeaponDef) => Math.max(1, Math.round(w.magazine * mods.magazine))
+  const magSize = (w: WeaponState) =>
+    Math.max(1, Math.round(w.def.magazine * mods.magazine * (w.mods.includes('extended') ? EXTENDED_MAG_SCALE : 1)))
   const current = () => weapons[active]
 
   const UPGRADES: Upgrade[] = [
@@ -536,7 +586,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       desc: () => '+40% magazine size, instantly refilled',
       apply: () => {
         mods.magazine *= 1.4
-        for (const w of weapons) w.ammo = magSize(w.def)
+        for (const w of weapons) w.ammo = magSize(w)
       },
       available: () => weapons.some((w) => !w.def.melee),
     },
@@ -626,7 +676,7 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     Object.assign(mods, BASE_MODS)
     Object.assign(player, { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0 })
     Object.assign(drone, { active: 0, cooldown: 0, x: player.x, y: player.y, angle: 0, orbit: 0, fireTimer: 0 })
-    weapons = cls.weapons.map((def) => ({ def, ammo: def.magazine, reloading: 0 }))
+    weapons = cls.weapons.map((def) => ({ def, ammo: def.magazine, reloading: 0, mods: [] }))
     active = 0
     zombies = []
     bullets = []
@@ -634,6 +684,10 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     decals = []
     pops = []
     offered = []
+    drops = []
+    pickupBanner = { text: '', life: 0 }
+    Object.assign(stats, emptyCombatStats())
+    heartbeat.reset()
     hidePanels()
     cam.x = clamp(player.x - VIEW_W / 2, 0, ARENA_W - VIEW_W)
     cam.y = clamp(player.y - VIEW_H / 2, 0, ARENA_H - VIEW_H)
@@ -769,6 +823,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       dashVx: 0,
       dashVy: 0,
       bossIndex: bossesSpawned,
+      burn: 0,
+      burnDps: 0,
     }
   }
 
@@ -839,6 +895,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     const record = submitScore('endless-horde', seconds)
     overTime.textContent = formatClock(seconds)
     overKills.textContent = `${kills}`
+    heartbeat.reset()
+    overSummary.innerHTML = combatSummaryHtml({ ...stats, kills }, cls.drone ? 'Drone Kills' : 'Ability Kills')
     overBest.textContent = record
       ? `New personal best!${previousBest > 0 ? ` (old ${formatClock(previousBest)})` : ''}`
       : `Personal best ${formatClock(previousBest)}`
@@ -877,8 +935,10 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     if (sparks.length > 600) sparks.splice(0, sparks.length - 600)
   }
 
-  const killZombie = (z: Zombie) => {
+  const killZombie = (z: Zombie, byDrone = false) => {
     kills += 1
+    if (byDrone) stats.abilityKills += 1
+    if (Math.random() < DROP_CHANCE[z.kind]) dropWeapon(z.x, z.y, z.kind === 'miniboss')
     decals.push({ x: z.x, y: z.y, r: z.r * (1 + Math.random() * 0.6) })
     if (decals.length > 260) decals.shift()
     if (z.kind === 'miniboss') {
@@ -892,6 +952,28 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     }
   }
 
+  const dropWeapon = (x: number, y: number, guaranteed: boolean) => {
+    const guns = weapons.map((w, i) => (w.def.melee ? -1 : i)).filter((i) => i >= 0)
+    if (!guns.length) return
+    const weapon = guns[Math.floor(Math.random() * guns.length)]
+    drops.push({ x, y, weapon, mods: rollWeaponMods(guaranteed), life: DROP_LIFE })
+  }
+
+  /** Refills the dropped gun and bolts on any attachments it doesn't have yet. */
+  const takeDrop = (drop: Drop) => {
+    const w = weapons[drop.weapon]
+    if (!w) return
+    const fresh = drop.mods.filter((m) => !w.mods.includes(m))
+    w.mods.push(...fresh)
+    w.ammo = magSize(w)
+    w.reloading = 0
+    pickupBanner = {
+      text: fresh.length ? `${modNames(fresh)} — ${w.def.name}` : `${w.def.name} restocked`,
+      life: PICKUP_BANNER_TIME,
+    }
+    playSfx(fresh.length ? 'pickup-weapon' : 'pickup-ammo')
+  }
+
   /** `fromPlayer` hits can crit and show a damage number; drone rounds do neither. */
   const damageZombie = (z: Zombie, amount: number, knockX: number, knockY: number, fromPlayer: boolean) => {
     const crit = fromPlayer && Math.random() < mods.crit
@@ -899,18 +981,21 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     z.hp -= dealt
     z.hitFlash = 0.08
     if (fromPlayer) {
+      stats.damage += dealt
+      if (crit) stats.crits += 1
       pops.push({ x: z.x + (Math.random() - 0.5) * 10, y: z.y - z.r - 4, amount: dealt, life: POP_LIFE, crit })
       if (pops.length > 80) pops.splice(0, pops.length - 80)
     }
     const knock = z.kind === 'miniboss' ? 2 : z.kind === 'brute' ? 5 : 10
     z.x += knockX * knock
     z.y += knockY * knock
-    if (z.hp <= 0) killZombie(z)
+    if (z.hp <= 0) killZombie(z, !fromPlayer)
   }
 
   const startReload = (w: WeaponState) => {
-    if (w.def.melee || w.reloading > 0 || w.ammo >= magSize(w.def)) return
+    if (w.def.melee || w.reloading > 0 || w.ammo >= magSize(w)) return
     w.reloading = w.def.reload * mods.reload
+    playReload(RELOAD_KIND.get(w.def) ?? 'rifle', 'start')
   }
 
   const swapWeapon = () => {
@@ -934,6 +1019,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     if (!melee) return
     player.slash = 0.18
     playSfx('katana')
+    stats.shots += 1
+    let landed = false
     for (const z of zombies) {
       if (z.hp <= 0) continue
       const dx = z.x - player.x
@@ -943,6 +1030,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       let diff = Math.atan2(dy, dx) - player.angle
       diff = Math.atan2(Math.sin(diff), Math.cos(diff))
       if (Math.abs(diff) > melee.arc / 2 && dist > z.r + PLAYER_RADIUS) continue
+      if (!landed) stats.hits += 1
+      landed = true
       damageZombie(z, def.damage * mods.damage, dx / (dist || 1), dy / (dist || 1), true)
       burst(z.x, z.y, '#e9d5ff', 4, 140)
     }
@@ -966,8 +1055,11 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     w.ammo -= 1
     const pellets = 1 + mods.pellets
     const fan = 0.1
+    const spread = def.spread * (w.mods.includes('laser') ? LASER_SPREAD_SCALE : 1)
+    const incendiary = w.mods.includes('incendiary')
+    stats.shots += pellets
     for (let i = 0; i < pellets; i++) {
-      const offset = (i - (pellets - 1) / 2) * fan + (Math.random() - 0.5) * def.spread
+      const offset = (i - (pellets - 1) / 2) * fan + (Math.random() - 0.5) * spread
       const a = player.angle + offset
       bullets.push({
         x: player.x + Math.cos(a) * 20,
@@ -979,6 +1071,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         pierce: def.pierce + mods.pierce,
         drone: false,
         hit: new Set(),
+        incendiary,
+        scored: false,
       })
     }
     playSfx(def === SNIPER ? 'sniper' : def === REVOLVER ? 'barricade' : 'swap')
@@ -1021,6 +1115,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       pierce: 0,
       drone: true,
       hit: new Set(),
+      incendiary: false,
+      scored: false,
     })
   }
 
@@ -1065,9 +1161,19 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       pop.y -= dt * 40
     }
     pops = pops.filter((pop) => pop.life > 0)
+    pickupBanner.life = Math.max(0, pickupBanner.life - dt)
     if (phase !== 'playing') return
 
     elapsed += dt
+    heartbeat.update(dt, lowHealthSeverity(player.hp, player.maxHp))
+    for (const drop of drops) {
+      drop.life -= dt
+      if (Math.hypot(drop.x - player.x, drop.y - player.y) < PLAYER_RADIUS + 16) {
+        takeDrop(drop)
+        drop.life = 0
+      }
+    }
+    drops = drops.filter((d) => d.life > 0)
     if (mods.regen > 0) player.hp = Math.min(player.maxHp, player.hp + mods.regen * dt)
 
     let mx = 0
@@ -1107,7 +1213,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       w.reloading -= dt
       if (w.reloading <= 0) {
         w.reloading = 0
-        w.ammo = magSize(w.def)
+        w.ammo = magSize(w)
+        playReload(RELOAD_KIND.get(w.def) ?? 'rifle', 'end')
       }
     }
     if (pointerDown || held.has(' ') || touchAimId !== null) fire()
@@ -1140,6 +1247,14 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
         if (dx * dx + dy * dy > (z.r + 3) * (z.r + 3)) continue
         b.hit.add(z)
         const speed = Math.hypot(b.vx, b.vy) || 1
+        if (!b.drone && !b.scored) {
+          b.scored = true
+          stats.hits += 1
+        }
+        if (b.incendiary) {
+          z.burn = INCENDIARY_TIME
+          z.burnDps = Math.max(z.burnDps, b.damage * INCENDIARY_DPS_SHARE)
+        }
         damageZombie(z, b.damage, b.vx / speed, b.vy / speed, !b.drone)
         burst(b.x, b.y, '#dc2626', 2, 90)
         if (b.pierce <= 0) {
@@ -1155,6 +1270,17 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
       if (z.hp <= 0) continue
       z.hitFlash = Math.max(0, z.hitFlash - dt)
       z.attackCd = Math.max(0, z.attackCd - dt)
+      if (z.burn > 0) {
+        z.burn -= dt
+        const tick = Math.min(z.hp, z.burnDps * dt)
+        z.hp -= tick
+        stats.damage += tick
+        if (Math.random() < dt * 12) burst(z.x, z.y - z.r * 0.5, Math.random() < 0.5 ? '#f97316' : '#fde047', 1, 60)
+        if (z.hp <= 0) {
+          killZombie(z)
+          continue
+        }
+      }
       z.wobble += dt * 6
       const dx = player.x - z.x
       const dy = player.y - z.y
@@ -1378,6 +1504,13 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     ctx.fillRect(z.r * 0.35, -z.r * 0.4, z.r * 0.2, z.r * 0.2)
     ctx.fillRect(z.r * 0.35, z.r * 0.2, z.r * 0.2, z.r * 0.2)
     ctx.restore()
+    if (z.burn > 0) {
+      ctx.strokeStyle = `rgba(249,115,22,${0.55 + 0.35 * Math.sin(blink * 20)})`
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(z.x, z.y, z.r + 4, 0, Math.PI * 2)
+      ctx.stroke()
+    }
     if (z.kind === 'brute' || (z.kind !== 'miniboss' && z.hp < z.maxHp)) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)'
       ctx.fillRect(z.x - z.r, z.y - z.r - 8, z.r * 2, 4)
@@ -1418,14 +1551,22 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     const def = current()?.def
     ctx.save()
     ctx.translate(player.x, player.y)
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)'
+    const laser = current()?.mods.includes('laser') ?? false
+    ctx.strokeStyle = laser ? 'rgba(239,68,68,0.6)' : 'rgba(255,255,255,0.18)'
     ctx.lineWidth = 1.5
-    ctx.setLineDash([6, 8])
+    if (!laser) ctx.setLineDash([6, 8])
+    const reach = laser ? 320 : 160
     ctx.beginPath()
     ctx.moveTo(Math.cos(player.angle) * 22, Math.sin(player.angle) * 22)
-    ctx.lineTo(Math.cos(player.angle) * 160, Math.sin(player.angle) * 160)
+    ctx.lineTo(Math.cos(player.angle) * reach, Math.sin(player.angle) * reach)
     ctx.stroke()
     ctx.setLineDash([])
+    if (laser) {
+      ctx.fillStyle = 'rgba(248,113,113,0.9)'
+      ctx.beginPath()
+      ctx.arc(Math.cos(player.angle) * reach, Math.sin(player.angle) * reach, 2.5, 0, Math.PI * 2)
+      ctx.fill()
+    }
     if (player.slash > 0 && def?.melee) {
       ctx.strokeStyle = `rgba(233,213,255,${player.slash * 4})`
       ctx.lineWidth = 6
@@ -1492,8 +1633,8 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     }`
     const w = current()
     if (w) {
-      hudWeapon.textContent = w.def.name
-      hudAmmo.textContent = w.def.melee ? '∞' : `${w.ammo} / ${magSize(w.def)}`
+      hudWeapon.textContent = w.mods.length ? `${w.def.name} ${modIcons(w.mods)}` : w.def.name
+      hudAmmo.textContent = w.def.melee ? '∞' : `${w.ammo} / ${magSize(w)}`
       hudReload.classList.toggle('hidden', w.reloading <= 0)
     }
     const stowed = weapons.length > 1 ? weapons[(active + 1) % weapons.length].def.name : ''
@@ -1579,6 +1720,15 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     const sy = shake > 0 ? (Math.random() - 0.5) * shake : 0
     ctx.translate(-cam.x + sx, -cam.y + sy)
     drawStreets()
+    for (const drop of drops) {
+      drawWeaponDrop(ctx, drop.x, drop.y, blink, drop.mods, drop.life < 5)
+      ctx.save()
+      ctx.font = '700 10px ui-sans-serif, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillStyle = drop.mods.length ? WEAPON_MODS[drop.mods[0]].color : '#cbd5e1'
+      ctx.fillText(drop.mods.length ? modIcons(drop.mods) + ' ' + weapons[drop.weapon].def.name : weapons[drop.weapon].def.name, drop.x, drop.y - 24)
+      ctx.restore()
+    }
     for (const b of bullets) {
       ctx.fillStyle = b.drone ? '#c4b5fd' : '#fde68a'
       ctx.beginPath()
@@ -1601,6 +1751,23 @@ export function mountEndlessHorde(onQuit: () => void, onMainMenu: () => void): H
     if (player.hurt > 0) {
       ctx.fillStyle = `rgba(220,38,38,${player.hurt * 0.8})`
       ctx.fillRect(0, 0, VIEW_W, VIEW_H)
+    }
+    if (phase === 'playing' || phase === 'upgrade') {
+      drawLowHealthVignette(ctx, VIEW_W, VIEW_H, elapsed, lowHealthSeverity(player.hp, player.maxHp))
+    }
+    if (pickupBanner.life > 0) {
+      ctx.save()
+      ctx.globalAlpha = Math.min(1, pickupBanner.life / 0.4)
+      ctx.font = '800 16px ui-sans-serif, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      const bw = ctx.measureText(pickupBanner.text).width + 36
+      ctx.fillStyle = 'rgba(15,23,42,0.85)'
+      ctx.fillRect(VIEW_W / 2 - bw / 2, VIEW_H - 92, bw, 30)
+      ctx.strokeStyle = 'rgba(250,204,21,0.7)'
+      ctx.strokeRect(VIEW_W / 2 - bw / 2, VIEW_H - 92, bw, 30)
+      ctx.fillStyle = '#fde68a'
+      ctx.fillText(pickupBanner.text, VIEW_W / 2, VIEW_H - 72)
+      ctx.restore()
     }
     if (phase === 'select') {
       ctx.fillStyle = 'rgba(0,0,0,0.35)'

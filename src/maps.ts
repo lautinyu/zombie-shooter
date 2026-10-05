@@ -81,6 +81,20 @@ export interface GameMap {
   spawn?: { x: number; y: number }
   /** Bolted-down alien turret nests, used by the UFO interiors. */
   emplacements?: { x: number; y: number }[]
+  /** NG+ security doors sealing doorways until a player hacks them open. */
+  securityDoors?: Rect[]
+  /** NG+ live floor wires, each powered from a junction box that can be hacked. */
+  liveWires?: LiveWireSpec[]
+  /** Doors that are solid right now; collision treats them like walls. */
+  doors?: Rect[]
+}
+
+export interface LiveWireSpec {
+  x: number
+  y: number
+  w: number
+  h: number
+  box: { x: number; y: number }
 }
 
 const BORDER = 30
@@ -1059,6 +1073,15 @@ const SHIP_HOLD: GameMap = {
     { x: 2620, y: 1500 },
     { x: 2690, y: 760 },
   ],
+  // Both ways into the terminal room are sealed.
+  securityDoors: [
+    { x: 2150, y: 1400, w: 60, h: 200 },
+    { x: 2590, y: 970, w: 200, h: 60 },
+  ],
+  liveWires: [
+    { x: 1120, y: 400, w: 70, h: 200, box: { x: 1240, y: 330 } },
+    { x: 1530, y: 1045, w: 200, h: 60, box: { x: 1780, y: 1130 } },
+  ],
 }
 
 const SHIP_LAB: GameMap = {
@@ -1110,6 +1133,15 @@ const SHIP_LAB: GameMap = {
     { x: 2015, y: 2510 },
     { x: 1230, y: 2560 },
   ],
+  securityDoors: [
+    { x: 1130, y: 2000, w: 200, h: 60 },
+    { x: 1600, y: 2410, w: 60, h: 200 },
+  ],
+  liveWires: [
+    { x: 315, y: 1070, w: 200, h: 60, box: { x: 580, y: 1130 } },
+    { x: 1525, y: 1430, w: 60, h: 200, box: { x: 1440, y: 1360 } },
+    { x: 330, y: 2070, w: 170, h: 60, box: { x: 560, y: 2140 } },
+  ],
 }
 
 /**
@@ -1157,6 +1189,10 @@ const SHIP_BRIDGE: GameMap = {
     { x: 2300, y: 250 },
     { x: 700, y: 1950 },
     { x: 2300, y: 1950 },
+  ],
+  liveWires: [
+    { x: 1350, y: 320, w: 300, h: 50, box: { x: 1720, y: 420 } },
+    { x: 1350, y: 1830, w: 300, h: 50, box: { x: 1720, y: 1780 } },
   ],
 }
 
@@ -1207,7 +1243,7 @@ export function mapById(id: MapId): GameMap {
 }
 
 export function circleHitsWall(map: GameMap, x: number, y: number, r: number): boolean {
-  for (const w of map.walls) {
+  for (const w of map.doors ? [...map.walls, ...map.doors] : map.walls) {
     const nx = Math.max(w.x, Math.min(x, w.x + w.w))
     const ny = Math.max(w.y, Math.min(y, w.y + w.h))
     const dx = x - nx

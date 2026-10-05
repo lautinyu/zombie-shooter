@@ -1,3 +1,4 @@
+import type { WeaponModId } from './weaponMods'
 export type WeaponId =
   | 'rusty-pistol'
   | 'old-rifle'
@@ -98,6 +99,8 @@ export interface Weapon {
   blastFreeze?: number
   /** Acid needles melt armour and stack poison on the target. */
   venom?: boolean
+  /** Attachments picked up from dropped weapons this mission. */
+  attachments?: WeaponModId[]
 }
 
 /** Poison applications a single target can carry from the Venom Spitter. */

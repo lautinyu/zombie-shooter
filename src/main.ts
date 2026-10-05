@@ -54,6 +54,7 @@ import { mountSettings } from './SettingsModal'
 import { onSettingsChange, settings } from './settings'
 import { startCloudSync } from './cloud/account'
 import type { ArcadeGameId } from './arcadeStats'
+import { combatSummaryHtml } from './combatSummary'
 
 inject()
 
@@ -332,25 +333,27 @@ app.innerHTML = `
   </div>
 
   <!-- Win -->
-  <div id="win" class="absolute inset-0 hidden items-center justify-center bg-emerald-950/90 p-6">
-    <div class="text-center">
+  <div id="win" class="absolute inset-0 hidden items-center justify-center overflow-y-auto bg-emerald-950/90 p-6">
+    <div class="m-auto text-center">
       <h2 class="text-6xl font-black text-emerald-400">MISSION ACCOMPLISHED!</h2>
       <p id="win-sub" class="mt-3 text-slate-300"></p>
       <p id="win-reward" class="mt-2 text-lg font-bold text-yellow-300"></p>
-      <button id="win-btn" class="mt-8 rounded-lg bg-emerald-500 px-8 py-3 text-lg font-bold text-emerald-950 hover:bg-emerald-400">
+      <div id="win-summary" class="mt-6"></div>
+      <button id="win-btn" class="mt-6 rounded-lg bg-emerald-500 px-8 py-3 text-lg font-bold text-emerald-950 hover:bg-emerald-400">
         Return to Main Menu
       </button>
     </div>
   </div>
 
   <!-- Lose -->
-  <div id="lose" class="absolute inset-0 hidden items-center justify-center bg-red-950/90 p-6">
-    <div class="text-center">
+  <div id="lose" class="absolute inset-0 hidden items-center justify-center overflow-y-auto bg-red-950/90 p-6">
+    <div class="m-auto text-center">
       <h2 id="lose-title" class="text-6xl font-black text-red-500">GAME OVER</h2>
       <p id="lose-tagline" class="mt-4 hidden text-2xl font-bold"></p>
       <p id="lose-sub" class="mt-3 text-slate-300"></p>
       <p id="lose-reward" class="mt-2 text-lg font-bold text-yellow-300"></p>
-      <div class="mt-8 flex items-center justify-center gap-4">
+      <div id="lose-summary" class="mt-6"></div>
+      <div class="mt-6 flex items-center justify-center gap-4">
         <button id="retry-btn" class="rounded-lg bg-red-500 px-8 py-3 text-lg font-bold text-white hover:bg-red-400">Try Again</button>
         <button id="lose-menu-btn" class="rounded-lg bg-white/10 px-8 py-3 text-lg font-bold text-white hover:bg-white/20">Main Menu</button>
       </div>
@@ -1618,6 +1621,7 @@ game.onStateChange = (state: GameState) => {
         ? `+${total} scrap earned (${game.scrapEarned} from kills, ${bonus} mission bonus)${chipText}`
         : `+${total} scrap salvaged from kills${chipText}`
     el(state === 'won' ? 'win-reward' : 'lose-reward').textContent = rewardText
+    el(state === 'won' ? 'win-summary' : 'lose-summary').innerHTML = combatSummaryHtml(game.combatStats())
   }
   if (state === 'won' && finaleOutro) {
     // The ending already told the story: bank the scrap and go straight back.
@@ -1671,7 +1675,7 @@ game.onStateChange = (state: GameState) => {
     tagline.classList.toggle('hidden', !infected)
     tagline.className = `mt-4 text-2xl font-bold text-orange-300 ${infected ? 'animate-pulse' : 'hidden'}`
     tagline.textContent = infected ? 'You have turned into a zombie.' : ''
-    loseScreen.className = `absolute inset-0 flex items-center justify-center p-6 ${
+    loseScreen.className = `absolute inset-0 flex items-center justify-center overflow-y-auto p-6 ${
       infected ? 'bg-orange-950/90' : 'bg-red-950/90'
     }`
     const where = missionMapName(currentMission)

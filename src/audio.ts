@@ -7,6 +7,8 @@ interface SoundProfile {
   duration: number
   type: OscillatorType
   gain: number
+  /** Seconds after the trigger before this voice starts. */
+  delay?: number
 }
 
 const PROFILES: Record<string, SoundProfile> = {
@@ -36,6 +38,11 @@ export type SfxId =
   | 'katana'
   | 'drone-shot'
   | 'sniper'
+  | 'heartbeat'
+  | 'hack'
+  | 'pickup-ammo'
+  | 'pickup-scrap'
+  | 'pickup-weapon'
 
 const SFX: Record<SfxId, SoundProfile> = {
   turret: { startFreq: 180, endFreq: 620, duration: 0.28, type: 'square', gain: 0.14 },
@@ -50,6 +57,11 @@ const SFX: Record<SfxId, SoundProfile> = {
   explosion: { startFreq: 260, endFreq: 24, duration: 1.9, type: 'sawtooth', gain: 0.32 },
   swap: { startFreq: 300, endFreq: 700, duration: 0.12, type: 'square', gain: 0.1 },
   type: { startFreq: 640, endFreq: 520, duration: 0.03, type: 'square', gain: 0.03 },
+  heartbeat: { startFreq: 92, endFreq: 40, duration: 0.17, type: 'sine', gain: 0.32 },
+  hack: { startFreq: 1200, endFreq: 1600, duration: 0.06, type: 'square', gain: 0.05 },
+  'pickup-ammo': { startFreq: 1250, endFreq: 900, duration: 0.04, type: 'square', gain: 0.08 },
+  'pickup-scrap': { startFreq: 988, endFreq: 988, duration: 0.07, type: 'square', gain: 0.06 },
+  'pickup-weapon': { startFreq: 400, endFreq: 820, duration: 0.1, type: 'triangle', gain: 0.1 },
   katana: { startFreq: 2400, endFreq: 380, duration: 0.18, type: 'triangle', gain: 0.1 },
   'drone-shot': { startFreq: 1500, endFreq: 900, duration: 0.04, type: 'square', gain: 0.035 },
   sniper: { startFreq: 1300, endFreq: 140, duration: 0.12, type: 'sawtooth', gain: 0.16 },
@@ -58,6 +70,19 @@ const SFX: Record<SfxId, SoundProfile> = {
 /** Extra voices stacked under a base effect so signature sounds read as heavier. */
 const LAYERS: Partial<Record<SfxId, SoundProfile[]>> = {
   katana: [{ startFreq: 5200, endFreq: 1800, duration: 0.12, type: 'sine', gain: 0.05 }],
+  'pickup-ammo': [
+    { startFreq: 720, endFreq: 480, duration: 0.05, type: 'square', gain: 0.08, delay: 0.06 },
+    { startFreq: 180, endFreq: 90, duration: 0.08, type: 'triangle', gain: 0.1, delay: 0.06 },
+  ],
+  'pickup-scrap': [
+    { startFreq: 1319, endFreq: 1319, duration: 0.14, type: 'square', gain: 0.06, delay: 0.07 },
+    { startFreq: 2637, endFreq: 2637, duration: 0.1, type: 'sine', gain: 0.03, delay: 0.07 },
+  ],
+  'pickup-weapon': [
+    { startFreq: 820, endFreq: 1640, duration: 0.12, type: 'triangle', gain: 0.08, delay: 0.1 },
+    { startFreq: 2460, endFreq: 2460, duration: 0.1, type: 'sine', gain: 0.05, delay: 0.22 },
+    { startFreq: 300, endFreq: 140, duration: 0.09, type: 'square', gain: 0.07 },
+  ],
   sniper: [
     { startFreq: 160, endFreq: 32, duration: 0.6, type: 'sine', gain: 0.3 },
     { startFreq: 480, endFreq: 60, duration: 0.32, type: 'triangle', gain: 0.12 },
@@ -124,6 +149,7 @@ function blip(profile: SoundProfile, destination: AudioNode, when: number, ctx: 
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()
   osc.type = profile.type
+  when += profile.delay ?? 0
   osc.frequency.setValueAtTime(profile.startFreq, when)
   osc.frequency.exponentialRampToValueAtTime(Math.max(20, profile.endFreq), when + profile.duration)
   gain.gain.setValueAtTime(profile.gain, when)
@@ -151,6 +177,107 @@ export function playSfx(id: SfxId) {
   resumeAudio()
   blip(SFX[id], sfxGain, ctx.currentTime, ctx)
   for (const layer of LAYERS[id] ?? []) blip(layer, sfxGain, ctx.currentTime, ctx)
+}
+
+export type ReloadKind = 'pistol' | 'revolver' | 'smg' | 'rifle' | 'shotgun' | 'sniper' | 'heavy' | 'energy'
+
+const click = (freq: number, delay = 0, gain = 0.08): SoundProfile => ({
+  startFreq: freq,
+  endFreq: freq * 0.65,
+  duration: 0.025,
+  type: 'square',
+  gain,
+  delay,
+})
+
+/** Mag-out on `start`, seat-and-chamber on `end`, voiced per gun family. */
+const RELOADS: Record<ReloadKind, { start: SoundProfile[]; end: SoundProfile[] }> = {
+  pistol: {
+    start: [click(2200), { startFreq: 320, endFreq: 200, duration: 0.06, type: 'triangle', gain: 0.07, delay: 0.05 }],
+    end: [
+      { startFreq: 900, endFreq: 320, duration: 0.05, type: 'square', gain: 0.11 },
+      { startFreq: 1800, endFreq: 900, duration: 0.04, type: 'square', gain: 0.08, delay: 0.08 },
+    ],
+  },
+  revolver: {
+    start: [
+      { startFreq: 1500, endFreq: 1100, duration: 0.04, type: 'triangle', gain: 0.08 },
+      { startFreq: 3300, endFreq: 2900, duration: 0.03, type: 'sine', gain: 0.05, delay: 0.09 },
+      { startFreq: 3100, endFreq: 2700, duration: 0.03, type: 'sine', gain: 0.05, delay: 0.14 },
+      { startFreq: 3400, endFreq: 3000, duration: 0.03, type: 'sine', gain: 0.04, delay: 0.2 },
+    ],
+    end: [
+      { startFreq: 700, endFreq: 240, duration: 0.06, type: 'square', gain: 0.12 },
+      click(2600, 0.09, 0.07),
+    ],
+  },
+  smg: {
+    start: [click(2600), click(1900, 0.04, 0.06)],
+    end: [
+      { startFreq: 1100, endFreq: 420, duration: 0.04, type: 'square', gain: 0.1 },
+      { startFreq: 2200, endFreq: 1200, duration: 0.03, type: 'square', gain: 0.08, delay: 0.06 },
+    ],
+  },
+  rifle: {
+    start: [click(2000), { startFreq: 420, endFreq: 260, duration: 0.07, type: 'sawtooth', gain: 0.06, delay: 0.05 }],
+    end: [
+      { startFreq: 760, endFreq: 260, duration: 0.06, type: 'square', gain: 0.13 },
+      { startFreq: 600, endFreq: 1400, duration: 0.06, type: 'sawtooth', gain: 0.08, delay: 0.1 },
+      { startFreq: 1400, endFreq: 500, duration: 0.05, type: 'square', gain: 0.1, delay: 0.18 },
+    ],
+  },
+  shotgun: {
+    start: [
+      { startFreq: 520, endFreq: 340, duration: 0.05, type: 'triangle', gain: 0.1 },
+      { startFreq: 520, endFreq: 340, duration: 0.05, type: 'triangle', gain: 0.1, delay: 0.18 },
+      { startFreq: 520, endFreq: 340, duration: 0.05, type: 'triangle', gain: 0.1, delay: 0.36 },
+    ],
+    end: [
+      { startFreq: 240, endFreq: 620, duration: 0.09, type: 'sawtooth', gain: 0.12 },
+      { startFreq: 620, endFreq: 210, duration: 0.09, type: 'sawtooth', gain: 0.12, delay: 0.13 },
+    ],
+  },
+  sniper: {
+    start: [
+      { startFreq: 800, endFreq: 1250, duration: 0.05, type: 'square', gain: 0.08 },
+      { startFreq: 420, endFreq: 250, duration: 0.08, type: 'sawtooth', gain: 0.1, delay: 0.08 },
+    ],
+    end: [
+      { startFreq: 250, endFreq: 460, duration: 0.08, type: 'sawtooth', gain: 0.1 },
+      { startFreq: 1500, endFreq: 900, duration: 0.04, type: 'square', gain: 0.11, delay: 0.11 },
+    ],
+  },
+  heavy: {
+    start: [{ startFreq: 210, endFreq: 120, duration: 0.11, type: 'sawtooth', gain: 0.12 }],
+    end: [
+      { startFreq: 170, endFreq: 60, duration: 0.16, type: 'square', gain: 0.16 },
+      { startFreq: 300, endFreq: 900, duration: 0.2, type: 'sine', gain: 0.05, delay: 0.06 },
+    ],
+  },
+  energy: {
+    start: [{ startFreq: 1200, endFreq: 200, duration: 0.25, type: 'sine', gain: 0.07 }],
+    end: [
+      { startFreq: 200, endFreq: 1600, duration: 0.3, type: 'sine', gain: 0.07 },
+      { startFreq: 2000, endFreq: 2000, duration: 0.05, type: 'sine', gain: 0.06, delay: 0.3 },
+    ],
+  },
+}
+
+/** Campaign guns sorted into a reload family by how they fire. */
+export function reloadKind(weapon: Weapon): ReloadKind {
+  if (weapon.pellets > 1) return 'shotgun'
+  if (weapon.blastRadius) return 'heavy'
+  if (weapon.chargeTime) return 'energy'
+  if (weapon.fireInterval <= 0.09) return 'smg'
+  if (weapon.damage >= 100) return 'sniper'
+  return weapon.slot === 'secondary' ? 'pistol' : 'rifle'
+}
+
+export function playReload(kind: ReloadKind, phase: 'start' | 'end') {
+  const ctx = ensureContext()
+  if (!ctx || !sfxGain) return
+  resumeAudio()
+  for (const voice of RELOADS[kind][phase]) blip(voice, sfxGain, ctx.currentTime, ctx)
 }
 
 function noteFreq(semitones: number): number {
