@@ -25,7 +25,7 @@ export const touchStick = { active: false, engaged: false, visible: false, x: 0,
 export const touchAim = { active: false, engaged: false, angle: 0 }
 
 /** Radius of the stick well in CSS pixels; a full push sits on the edge. */
-const STICK_RADIUS = 64
+const STICK_RADIUS = 48
 /** Deflection below this is treated as a resting thumb. */
 const DEAD_ZONE = 0.16
 
@@ -69,19 +69,19 @@ export function mountTouchControls(actions: InputActions): void {
   root.id = 'touch-controls'
   root.className = 'pointer-events-none fixed inset-0 z-[55] hidden touch-none select-none'
   root.innerHTML = `
-    <div id="touch-stick" style="bottom: calc(env(safe-area-inset-bottom) + 6rem)" class="pointer-events-auto absolute left-6 h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
-      <div id="touch-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/50 ring-2 ring-emerald-200/70"></div>
+    <div id="touch-stick" class="touch-pad touch-pad-left touch-stick pointer-events-auto absolute touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
+      <div id="touch-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full bg-emerald-400/50 ring-2 ring-emerald-200/70"></div>
     </div>
-    <div style="bottom: calc(env(safe-area-inset-bottom) + 6rem)" class="absolute right-6 flex items-end gap-3">
-      <div class="flex flex-col gap-3">
-        ${button('touch-swap', '⇄', 'h-14 w-14', 'text-xl')}
-        ${button('touch-reload', '⟳', 'h-14 w-14', 'text-xl')}
-        ${button('touch-ability', 'ABL', 'h-14 w-14', 'text-[11px]')}
-        ${button('touch-fire', 'FIRE', 'h-16 w-16', 'text-xs')}
+    <div class="touch-pad touch-pad-right absolute flex flex-col items-end gap-2">
+      <div class="grid grid-cols-2 gap-2">
+        ${button('touch-swap', '⇄', 'h-12 w-12', 'text-lg')}
+        ${button('touch-reload', '⟳', 'h-12 w-12', 'text-lg')}
+        ${button('touch-ability', 'ABL', 'h-12 w-12', 'text-[10px]')}
+        ${button('touch-fire', 'FIRE', 'h-12 w-12', 'text-[10px]')}
       </div>
-      <div id="touch-aim" class="pointer-events-auto relative h-36 w-36 touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
+      <div id="touch-aim" class="touch-stick pointer-events-auto relative touch-none rounded-full bg-white/10 ring-2 ring-white/25 backdrop-blur-sm">
         <div class="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-black uppercase tracking-wider text-white/40">Aim</div>
-        <div id="touch-aim-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-16 w-16 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-400/50 ring-2 ring-rose-200/70"></div>
+        <div id="touch-aim-nub" class="pointer-events-none absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full bg-rose-400/50 ring-2 ring-rose-200/70"></div>
       </div>
     </div>`
   document.body.appendChild(root)

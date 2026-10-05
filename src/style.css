@@ -164,3 +164,91 @@ textarea {
   opacity: 1;
   transform: translate(-50%, 0);
 }
+
+/*
+ * In-mission HUD columns. The canvas minimap owns the top-right corner, so the
+ * left status column and the centred readouts are sized to leave it clear.
+ * Keep the compact breakpoint in sync with drawMinimap() in game.ts.
+ */
+.hud-left {
+  top: 1.25rem;
+  left: 1.25rem;
+  width: 20rem;
+}
+
+.hud-center {
+  top: 1rem;
+  width: min(42rem, max(12rem, calc(100vw - 2 * 22rem)));
+}
+
+@media (max-width: 900px), (max-height: 520px) {
+  .hud-left {
+    top: 0.75rem;
+    left: 0.75rem;
+    width: min(14rem, 42vw);
+    max-height: calc(100vh - 1.5rem);
+    overflow: hidden;
+  }
+
+  .hud-left > * + * {
+    margin-top: 0.5rem;
+  }
+
+  .hud-left .p-3 {
+    padding: 0.5rem;
+  }
+
+  .hud-center {
+    top: 0.75rem;
+    width: min(42rem, max(9rem, calc(100vw - 2 * max(min(14rem, 42vw), 150px) - 3.5rem)));
+  }
+}
+
+@media (max-width: 560px) {
+  /* Portrait phones: there is no room for a middle column beside the corners. */
+  .hud-center {
+    top: calc(0.75rem + 140px);
+    left: auto;
+    right: 0.75rem;
+    width: 150px;
+    translate: none;
+    align-items: stretch;
+  }
+}
+
+/* Touch pads hug the bottom corners so the middle of the field stays open. */
+.touch-pad {
+  bottom: calc(env(safe-area-inset-bottom) + 1.5rem);
+}
+
+.touch-pad-left {
+  left: calc(env(safe-area-inset-left) + 1rem);
+}
+
+.touch-pad-right {
+  right: calc(env(safe-area-inset-right) + 1rem);
+}
+
+.touch-stick {
+  width: 8.5rem;
+  height: 8.5rem;
+}
+
+@media (max-width: 560px), (max-height: 520px) {
+  .touch-pad {
+    bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
+  }
+
+  .touch-pad-left {
+    left: calc(env(safe-area-inset-left) + 0.75rem);
+  }
+
+  .touch-pad-right {
+    right: calc(env(safe-area-inset-right) + 0.75rem);
+  }
+
+  .touch-stick {
+    width: 7rem;
+    height: 7rem;
+  }
+}

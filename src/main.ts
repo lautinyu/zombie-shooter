@@ -72,7 +72,7 @@ app.innerHTML = `
 
   <!-- HUD -->
   <div id="hud" class="pointer-events-none absolute inset-0 hidden select-none text-white">
-    <div class="absolute left-5 top-5 w-80 space-y-3">
+    <div class="hud-left absolute space-y-3">
       <div id="player-panels" class="space-y-2"></div>
 
       <div class="rounded-lg bg-black/60 p-3 ring-1 ring-white/10">
@@ -104,7 +104,7 @@ app.innerHTML = `
       Every centred readout lives in this one column: siblings stack in flow
       instead of fighting over the same absolute slot, so nothing can overlap.
     -->
-    <div class="absolute left-1/2 top-4 z-40 flex w-3/4 max-w-2xl -translate-x-1/2 flex-col items-center gap-2 [isolation:isolate]">
+    <div class="hud-center absolute left-1/2 z-40 flex -translate-x-1/2 flex-col items-center gap-2 [isolation:isolate]">
       <div class="rounded-md bg-black/50 px-3 py-1 text-xs uppercase tracking-widest text-slate-300">
         <span id="current-zone">The Streets</span>
       </div>

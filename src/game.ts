@@ -6054,6 +6054,29 @@ export class Game {
     ctx.fillRect(t.x - 17, t.y - 26, 34, 24)
     ctx.fillStyle = '#7e5bb5'
     ctx.fillRect(t.x - 17, t.y + 4, 34, 6)
+
+    // The radar hides the terminal, so it announces itself in the world.
+    if (!t.breached) {
+      const bob = Math.sin(t.pulse * 2.4) * 5
+      ctx.font = '900 18px ui-sans-serif, system-ui, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      ctx.shadowColor = '#c084fc'
+      ctx.shadowBlur = 14 + glow * 10
+      ctx.lineWidth = 4
+      ctx.strokeStyle = 'rgba(20,8,40,0.85)'
+      ctx.strokeText('BREACH POINT HERE', t.x, t.y - t.r - 18 + bob)
+      ctx.fillStyle = `rgba(240,220,255,${0.75 + glow * 0.4})`
+      ctx.fillText('BREACH POINT HERE', t.x, t.y - t.r - 18 + bob)
+      ctx.shadowBlur = 0
+      ctx.fillStyle = `rgba(217,180,255,${0.5 + glow * 0.4})`
+      ctx.beginPath()
+      ctx.moveTo(t.x - 9, t.y - t.r - 4 + bob)
+      ctx.lineTo(t.x + 9, t.y - t.r - 4 + bob)
+      ctx.lineTo(t.x, t.y - t.r + 6 + bob)
+      ctx.closePath()
+      ctx.fill()
+    }
     ctx.restore()
   }
 
@@ -7220,15 +7243,18 @@ export class Game {
   private drawMinimap() {
     const ctx = this.ctx
     const m = this.map
-    const mw = 240
-    const mh = (mw * m.height) / m.width
-    const mx = this.viewW - mw - 20
-    // The touch pad owns the bottom corners, so the map moves out of its way.
-    const my = touchStick.visible ? 20 : this.viewH - mh - 20
-    const s = mw / m.width
+    // Pinned top-right, clear of the left status column; small screens get a
+    // smaller, more see-through map so the field stays readable.
+    const compact = this.viewW <= 900 || this.viewH <= 520
+    const margin = compact ? 12 : 20
+    const mw = compact ? 150 : 240
+    const mh = Math.min((mw * m.height) / m.width, compact ? 130 : 220)
+    const s = Math.min(mw / m.width, mh / m.height)
+    const mx = this.viewW - mw - margin
+    const my = margin
 
     ctx.save()
-    ctx.globalAlpha = 0.9
+    ctx.globalAlpha = compact || touchStick.visible ? 0.72 : 0.9
     ctx.fillStyle = '#050807'
     ctx.fillRect(mx - 6, my - 6, mw + 12, mh + 12)
     ctx.strokeStyle = 'rgba(255,255,255,0.25)'
@@ -7241,15 +7267,6 @@ export class Game {
     ctx.fillStyle = m.wallColor
     for (const w of m.walls) {
       ctx.fillRect(mx + w.x * s, my + w.y * s, Math.max(1, w.w * s), Math.max(1, w.h * s))
-    }
-
-    // The deck terminal is the objective, so the radar always marks it.
-    if (this.terminal) {
-      ctx.strokeStyle = this.terminal.breached ? '#4ade80' : '#e9d5ff'
-      ctx.lineWidth = 2
-      ctx.beginPath()
-      ctx.arc(mx + this.terminal.x * s, my + this.terminal.y * s, 6, 0, Math.PI * 2)
-      ctx.stroke()
     }
 
     if (this.mission?.type === 'protect') {
