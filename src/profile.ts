@@ -4,20 +4,17 @@ import { MISSIONS } from './missions'
 import type { SurvivorSkinId } from './survivorSkins'
 import { SURVIVOR_SKINS, isSurvivorSkinId, skinUnlocked } from './survivorSkins'
 import type { TexturePack } from './theme'
-import type { WeaponId } from './weapons'
+import type { GunSkinId } from './gunSkins'
+import { isGunSkinId } from './gunSkins'
+import type { Currency, Weapon, WeaponId } from './weapons'
 import { STARTER_WEAPONS, WEAPONS, weaponById } from './weapons'
 
 export const PROFILE_KEY = 'zombie-shooter-profile-v1'
 const STORAGE_KEY = PROFILE_KEY
 
 export interface Profile {
-  scrap: number
-  /** Chapter 2 currency, earned only in the arctic missions. */
-  chips: number
-  /** Chapter 3 currency, awarded only for clearing jungle stages. */
-  amber: number
-  /** Chapter 4 currency, salvaged only in the Rustlands. */
-  cores: number
+  /** The one account currency, earned in campaign and Endless Horde runs. */
+  zcoins: number
   owned: WeaponId[]
   /** Heavy firearm carried in the primary slot. */
   primary: WeaponId
@@ -34,6 +31,36 @@ export interface Profile {
   textures: TexturePack | null
   /** Locker skin worn by player 1 in campaign missions; null keeps the survivor's own outfit. */
   skin: SurvivorSkinId | null
+  /** Character skins bought in the Skin Shop. */
+  ownedSkins: SurvivorSkinId[]
+  /** Weapon camos bought in the Skin Shop. */
+  ownedGunSkins: GunSkinId[]
+  /** Camo painted on each loadout slot; null keeps the stock finish. */
+  gunSkins: { primary: GunSkinId | null; secondary: GunSkinId | null }
+}
+
+/**
+ * Z-Coins per unit of each old chapter currency. Saves from before the merge
+ * are converted at these rates, and run earnings still tallied per chapter
+ * (scrap from kills, chip/amber/core bonuses) are paid out through them.
+ */
+export const ZCOIN_RATE: Record<Currency, number> = { scrap: 1, chips: 4, amber: 5, cores: 6 }
+
+/** A weapon's shop price in Z-Coins. */
+export function zcoinPrice(w: Weapon): number {
+  return w.price * ZCOIN_RATE[w.currency]
+}
+
+type CoinSink = (amount: number) => void
+let coinSink: CoinSink | null = null
+
+/** The live profile owner registers here so arcade cabinets can pay out Z-Coins. */
+export function registerCoinSink(sink: CoinSink) {
+  coinSink = sink
+}
+
+export function earnZCoins(amount: number) {
+  if (amount > 0) coinSink?.(Math.round(amount))
 }
 
 /** The Chapter 4 finale: clearing it opens New Game+. */
@@ -51,12 +78,23 @@ export function campaignCleared(profile: Profile): number {
 export function unlockedSkins(profile: Profile): SurvivorSkinId[] {
   const cleared = campaignCleared(profile)
   const ngPlus = ngPlusUnlocked(profile)
-  return SURVIVOR_SKINS.filter((s) => skinUnlocked(s, cleared, ngPlus)).map((s) => s.id)
+  return SURVIVOR_SKINS.filter((s) => skinUnlocked(s, cleared, ngPlus, profile.ownedSkins)).map((s) => s.id)
 }
 
 /** Wipes the save entirely: progress, weapons, currency and survivors. */
 export function freshProfile(): Profile {
-  return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }
+  return blankProfile()
+}
+
+function blankProfile(): Profile {
+  return {
+    ...DEFAULT_PROFILE,
+    owned: [...STARTER_WEAPONS],
+    completed: [],
+    ownedSkins: [],
+    ownedGunSkins: [],
+    gunSkins: { primary: null, secondary: null },
+  }
 }
 
 export function clearProfile() {
@@ -68,10 +106,7 @@ export function clearProfile() {
 }
 
 const DEFAULT_PROFILE: Profile = {
-  scrap: 0,
-  chips: 0,
-  amber: 0,
-  cores: 0,
+  zcoins: 0,
   owned: [...STARTER_WEAPONS],
   primary: 'old-rifle',
   secondary: 'm9-sidearm',
@@ -81,6 +116,33 @@ const DEFAULT_PROFILE: Profile = {
   completed: [],
   textures: null,
   skin: null,
+  ownedSkins: [],
+  ownedGunSkins: [],
+  gunSkins: { primary: null, secondary: null },
+}
+
+const count = (value: unknown): number => (typeof value === 'number' && value >= 0 ? Math.floor(value) : 0)
+
+/** Saves written before Z-Coins carry four chapter wallets; fold them into one. */
+function readZCoins(record: Record<string, unknown>): number {
+  if (typeof record.zcoins === 'number') return count(record.zcoins)
+  return (
+    count(record.scrap) * ZCOIN_RATE.scrap +
+    count(record.chips) * ZCOIN_RATE.chips +
+    count(record.amber) * ZCOIN_RATE.amber +
+    count(record.cores) * ZCOIN_RATE.cores
+  )
+}
+
+function readGunSkins(value: unknown, owned: GunSkinId[]): Profile['gunSkins'] {
+  const out: Profile['gunSkins'] = { primary: null, secondary: null }
+  if (typeof value !== 'object' || value === null) return out
+  const record = value as Record<string, unknown>
+  for (const slot of ['primary', 'secondary'] as const) {
+    const id = record[slot]
+    if (isGunSkinId(id) && owned.includes(id)) out[slot] = id
+  }
+  return out
 }
 
 function isWeaponId(value: unknown): value is WeaponId {
@@ -102,7 +164,7 @@ function isTexturePack(value: unknown): value is TexturePack {
 export function loadProfile(): Profile {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (!raw) return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }
+    if (!raw) return blankProfile()
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) throw new Error('bad profile')
     const record = parsed as Record<string, unknown>
@@ -121,13 +183,9 @@ export function loadProfile(): Profile {
       if (legacy && weaponById(legacy).slot === slot) return legacy
       return slot === 'primary' ? 'old-rifle' : 'm9-sidearm'
     }
+    const ownedGunSkins = Array.isArray(record.ownedGunSkins) ? record.ownedGunSkins.filter(isGunSkinId) : []
     return {
-      scrap: typeof record.scrap === 'number' && record.scrap >= 0 ? Math.floor(record.scrap) : 0,
-      chips: typeof record.chips === 'number' && record.chips >= 0 ? Math.floor(record.chips) : 0,
-      // Saves written before chapter 3 simply have no amber yet.
-      amber: typeof record.amber === 'number' && record.amber >= 0 ? Math.floor(record.amber) : 0,
-      // Saves written before chapter 4 simply have no cores yet.
-      cores: typeof record.cores === 'number' && record.cores >= 0 ? Math.floor(record.cores) : 0,
+      zcoins: readZCoins(record),
       owned,
       primary: pick('primary', record.primary),
       secondary: pick('secondary', record.secondary),
@@ -137,9 +195,12 @@ export function loadProfile(): Profile {
       completed: Array.isArray(record.completed) ? record.completed.filter(isMissionId) : [],
       textures: isTexturePack(record.textures) ? record.textures : null,
       skin: isSurvivorSkinId(record.skin) ? record.skin : null,
+      ownedSkins: Array.isArray(record.ownedSkins) ? record.ownedSkins.filter(isSurvivorSkinId) : [],
+      ownedGunSkins,
+      gunSkins: readGunSkins(record.gunSkins, ownedGunSkins),
     }
   } catch {
-    return { ...DEFAULT_PROFILE, owned: [...STARTER_WEAPONS], completed: [] }
+    return blankProfile()
   }
 }
 

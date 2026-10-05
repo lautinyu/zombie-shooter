@@ -43,6 +43,10 @@ export type SfxId =
   | 'pickup-ammo'
   | 'pickup-scrap'
   | 'pickup-weapon'
+  | 'acid-spit'
+  | 'fuse'
+  | 'coin'
+  | 'denied'
 
 const SFX: Record<SfxId, SoundProfile> = {
   turret: { startFreq: 180, endFreq: 620, duration: 0.28, type: 'square', gain: 0.14 },
@@ -65,6 +69,10 @@ const SFX: Record<SfxId, SoundProfile> = {
   katana: { startFreq: 2400, endFreq: 380, duration: 0.18, type: 'triangle', gain: 0.1 },
   'drone-shot': { startFreq: 1500, endFreq: 900, duration: 0.04, type: 'square', gain: 0.035 },
   sniper: { startFreq: 1300, endFreq: 140, duration: 0.12, type: 'sawtooth', gain: 0.16 },
+  'acid-spit': { startFreq: 340, endFreq: 120, duration: 0.18, type: 'sawtooth', gain: 0.09 },
+  fuse: { startFreq: 700, endFreq: 1400, duration: 0.3, type: 'square', gain: 0.07 },
+  coin: { startFreq: 1568, endFreq: 1568, duration: 0.06, type: 'square', gain: 0.06 },
+  denied: { startFreq: 220, endFreq: 150, duration: 0.18, type: 'square', gain: 0.08 },
 }
 
 /** Extra voices stacked under a base effect so signature sounds read as heavier. */
@@ -83,6 +91,8 @@ const LAYERS: Partial<Record<SfxId, SoundProfile[]>> = {
     { startFreq: 2460, endFreq: 2460, duration: 0.1, type: 'sine', gain: 0.05, delay: 0.22 },
     { startFreq: 300, endFreq: 140, duration: 0.09, type: 'square', gain: 0.07 },
   ],
+  'acid-spit': [{ startFreq: 900, endFreq: 300, duration: 0.1, type: 'sine', gain: 0.05, delay: 0.04 }],
+  coin: [{ startFreq: 2093, endFreq: 2093, duration: 0.14, type: 'square', gain: 0.05, delay: 0.06 }],
   sniper: [
     { startFreq: 160, endFreq: 32, duration: 0.6, type: 'sine', gain: 0.3 },
     { startFreq: 480, endFreq: 60, duration: 0.32, type: 'triangle', gain: 0.12 },

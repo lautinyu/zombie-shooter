@@ -13,6 +13,10 @@ export type SurvivorSkinId =
   | 'stealth'
   | 'juggernaut'
   | 'cyber'
+  | 'desert'
+  | 'arctic'
+  | 'synthwave'
+  | 'gold'
 
 export interface SurvivorSkin {
   id: SurvivorSkinId
@@ -25,29 +29,44 @@ export interface SurvivorSkin {
   unlockMissions: number
   /** Needs the Chapter 4 finale cleared (New Game+ unlocked). */
   unlockNgPlus?: boolean
+  /** Z-Coin price in the Skin Shop; 0 = never sold (always available). */
+  price: number
+  /** Only obtainable by buying it in the Skin Shop. */
+  shopOnly?: boolean
 }
 
 export const SURVIVOR_SKINS: SurvivorSkin[] = [
-  { id: 'swat', name: 'SWAT', blurb: 'Navy plate and a blue visor.', ring: 'ring-sky-400', text: 'text-sky-300', unlockMissions: 0 },
-  { id: 'assassin', name: 'Assassin', blurb: 'Hood, cape and a red scarf.', ring: 'ring-violet-400', text: 'text-violet-300', unlockMissions: 0 },
-  { id: 'technician', name: 'Technician', blurb: 'Hi-vis vest, hard hat, antenna pack.', ring: 'ring-amber-400', text: 'text-amber-300', unlockMissions: 0 },
-  { id: 'marksman', name: 'Marksman', blurb: 'Shaggy ghillie and boonie hat.', ring: 'ring-emerald-400', text: 'text-emerald-300', unlockMissions: 0 },
-  { id: 'hazmat', name: 'Hazmat Ops', blurb: 'Sealed yellow suit, gas mask filters.', ring: 'ring-yellow-400', text: 'text-yellow-300', unlockMissions: 3 },
-  { id: 'stealth', name: 'Stealth Recon', blurb: 'Matte black kit, quad night-vision.', ring: 'ring-lime-400', text: 'text-lime-300', unlockMissions: 6 },
-  { id: 'juggernaut', name: 'Heavy Juggernaut', blurb: 'Bulky blast plate with red bands.', ring: 'ring-red-400', text: 'text-red-300', unlockMissions: 10 },
-  { id: 'cyber', name: 'Cyber Operative', blurb: 'White shell, neon circuitry.', ring: 'ring-pink-400', text: 'text-pink-300', unlockMissions: 0, unlockNgPlus: true },
+  { id: 'swat', name: 'SWAT', blurb: 'Navy plate and a blue visor.', ring: 'ring-sky-400', text: 'text-sky-300', unlockMissions: 0, price: 0 },
+  { id: 'assassin', name: 'Assassin', blurb: 'Hood, cape and a red scarf.', ring: 'ring-violet-400', text: 'text-violet-300', unlockMissions: 0, price: 0 },
+  { id: 'technician', name: 'Technician', blurb: 'Hi-vis vest, hard hat, antenna pack.', ring: 'ring-amber-400', text: 'text-amber-300', unlockMissions: 0, price: 0 },
+  { id: 'marksman', name: 'Marksman', blurb: 'Shaggy ghillie and boonie hat.', ring: 'ring-emerald-400', text: 'text-emerald-300', unlockMissions: 0, price: 0 },
+  { id: 'hazmat', name: 'Hazmat Ops', blurb: 'Sealed yellow suit, gas mask filters.', ring: 'ring-yellow-400', text: 'text-yellow-300', unlockMissions: 3, price: 300 },
+  { id: 'stealth', name: 'Stealth Recon', blurb: 'Matte black kit, quad night-vision.', ring: 'ring-lime-400', text: 'text-lime-300', unlockMissions: 6, price: 450 },
+  { id: 'juggernaut', name: 'Heavy Juggernaut', blurb: 'Bulky blast plate with red bands.', ring: 'ring-red-400', text: 'text-red-300', unlockMissions: 10, price: 600 },
+  { id: 'cyber', name: 'Cyber Operative', blurb: 'White shell, neon circuitry.', ring: 'ring-pink-400', text: 'text-pink-300', unlockMissions: 0, unlockNgPlus: true, price: 900 },
+  { id: 'desert', name: 'Desert Ranger', blurb: 'Sand fatigues, tan plate, shemagh.', ring: 'ring-orange-300', text: 'text-orange-200', unlockMissions: 0, price: 350, shopOnly: true },
+  { id: 'arctic', name: 'Arctic Ops', blurb: 'Snow-white shell, ice-blue visor.', ring: 'ring-cyan-200', text: 'text-cyan-100', unlockMissions: 0, price: 400, shopOnly: true },
+  { id: 'synthwave', name: 'Neon Runner', blurb: 'Midnight suit with magenta glow.', ring: 'ring-fuchsia-400', text: 'text-fuchsia-300', unlockMissions: 0, price: 750, shopOnly: true },
+  { id: 'gold', name: 'Gold Commander', blurb: 'Polished gold plate, crimson sash.', ring: 'ring-yellow-300', text: 'text-yellow-200', unlockMissions: 0, price: 1200, shopOnly: true },
 ]
 
 export function isSurvivorSkinId(value: unknown): value is SurvivorSkinId {
   return typeof value === 'string' && SURVIVOR_SKINS.some((s) => s.id === value)
 }
 
-/** Whether a save has met a skin's unlock requirement. */
-export function skinUnlocked(skin: SurvivorSkin, campaignCleared: number, ngPlus: boolean): boolean {
-  return campaignCleared >= skin.unlockMissions && (!skin.unlockNgPlus || ngPlus)
+/** Whether a save has bought the skin or met its campaign unlock requirement. */
+export function skinUnlocked(
+  skin: SurvivorSkin,
+  campaignCleared: number,
+  ngPlus: boolean,
+  owned: readonly SurvivorSkinId[],
+): boolean {
+  if (owned.includes(skin.id)) return true
+  return !skin.shopOnly && campaignCleared >= skin.unlockMissions && (!skin.unlockNgPlus || ngPlus)
 }
 
 export function skinUnlockHint(skin: SurvivorSkin): string {
+  if (skin.shopOnly) return `Buy in the Skin Shop · ${skin.price} Z-Coins`
   if (skin.unlockNgPlus) return 'Clear the Chapter 4 finale'
   return `Clear ${skin.unlockMissions} campaign missions`
 }
@@ -71,6 +90,61 @@ function drawArms(c: CanvasRenderingContext2D, color: string) {
   c.stroke()
 }
 
+interface OperatorPalette {
+  suit: string
+  plate: string
+  trim: string
+  helmet: string
+  visor: string
+  glow?: string
+}
+
+const OPERATOR_PALETTES: Partial<Record<SurvivorSkinId, OperatorPalette>> = {
+  desert: { suit: '#a8865a', plate: '#d6b98c', trim: '#7c5c36', helmet: '#c2a170', visor: '#3f2a14' },
+  arctic: { suit: '#e2e8f0', plate: '#f8fafc', trim: '#94a3b8', helmet: '#f1f5f9', visor: '#38bdf8' },
+  synthwave: { suit: '#1e1b4b', plate: '#312e81', trim: '#f0abfc', helmet: '#0f0a2e', visor: '#22d3ee', glow: '#e879f9' },
+  gold: { suit: '#7f1d1d', plate: '#facc15', trim: '#b91c1c', helmet: '#eab308', visor: '#1c1917', glow: '#fef08a' },
+}
+
+/** The Skin Shop operators share one armoured silhouette in their own colours. */
+function drawOperator(c: CanvasRenderingContext2D, pal: OperatorPalette, t: number) {
+  c.fillStyle = pal.trim
+  c.fillRect(-14, -6, 5, 12)
+  c.fillStyle = pal.suit
+  c.beginPath()
+  c.ellipse(0, 0, 10, 14, 0, 0, TAU)
+  c.fill()
+  c.fillStyle = pal.plate
+  c.beginPath()
+  c.ellipse(1, 0, 7, 11, 0, 0, TAU)
+  c.fill()
+  if (pal.glow) {
+    c.save()
+    c.shadowColor = pal.glow
+    c.shadowBlur = 6 + Math.sin(t * 4) * 2
+    c.strokeStyle = pal.glow
+    c.lineWidth = 1.5
+    c.beginPath()
+    c.moveTo(-6, -9)
+    c.lineTo(6, -9)
+    c.moveTo(-6, 9)
+    c.lineTo(6, 9)
+    c.stroke()
+    c.restore()
+  }
+  c.fillStyle = pal.trim
+  c.fillRect(-2, -11, 3, 22)
+  drawArms(c, pal.suit)
+  c.fillStyle = pal.helmet
+  c.beginPath()
+  c.arc(-1, 0, 8, 0, TAU)
+  c.fill()
+  c.fillStyle = pal.visor
+  c.beginPath()
+  c.ellipse(4, 0, 3, 6, 0, 0, TAU)
+  c.fill()
+}
+
 /**
  * A top-down survivor in its local frame (facing +x), roughly 15 units in
  * radius. Each skin has its own silhouette: SWAT plate and visor, the
@@ -86,6 +160,12 @@ export function drawSurvivor(c: CanvasRenderingContext2D, id: SurvivorSkinId, st
   c.beginPath()
   c.ellipse(-step, 6, 5, 3.5, 0, 0, TAU)
   c.fill()
+
+  const operator = OPERATOR_PALETTES[id]
+  if (operator) {
+    drawOperator(c, operator, t)
+    return
+  }
 
   if (id === 'hazmat') {
     c.fillStyle = '#334155'

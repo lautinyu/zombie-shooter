@@ -29,13 +29,16 @@ import {
 } from './weapons'
 import type { Weapon, WeaponId, WeaponSlot } from './weapons'
 import {
+  ZCOIN_RATE,
   loadProfile,
   missionAmberReward,
   missionChipReward,
   missionCoreReward,
   missionReward,
   ngPlusUnlocked,
+  registerCoinSink,
   saveProfile,
+  zcoinPrice,
 } from './profile'
 import { CHARACTERS, characterById } from './characters'
 import type { CharacterId } from './characters'
@@ -51,6 +54,7 @@ import { mountEndlessHorde } from './EndlessHorde'
 import { mountFightingArcade } from './FightingArcade'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
+import { mountSkinShop } from './SkinShop'
 import { onSettingsChange, settings } from './settings'
 import { startCloudSync } from './cloud/account'
 import type { ArcadeGameId } from './arcadeStats'
@@ -192,14 +196,11 @@ app.innerHTML = `
           <span id="profile-avatar" class="text-xl leading-none">🧟</span>
           <span id="profile-name-label">Set Profile</span>
         </button>
-        <div class="mt-2 text-center text-sm font-bold text-yellow-300">Scrap: <span id="menu-scrap">0</span>
-          <span class="ml-3 text-cyan-300">Frozen Data Chips: <span id="menu-chips">0</span></span>
-          <span class="ml-3 text-amber-400">Ancient Amber: <span id="menu-amber">0</span></span>
-          <span class="ml-3 text-orange-400">Rust Cores: <span id="menu-cores">0</span></span>
-        </div>
+        <div class="mt-2 text-center text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="menu-zcoins">0</span></div>
         <nav class="mt-3 flex flex-wrap justify-center gap-3">
           <button id="shop-btn" class="rounded-lg bg-yellow-500/15 px-6 py-2 text-sm font-bold text-yellow-300 ring-1 ring-yellow-400/40 hover:bg-yellow-500/25">Weapons Shop</button>
           <button id="locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
+          <button id="skin-shop-btn" class="rounded-lg bg-fuchsia-500/15 px-6 py-2 text-sm font-bold text-fuchsia-300 ring-1 ring-fuchsia-400/40 hover:bg-fuchsia-500/25">🎨 Skin Shop</button>
           <button id="textures-btn" class="rounded-lg bg-violet-500/15 px-6 py-2 text-sm font-bold text-violet-300 ring-1 ring-violet-400/40 hover:bg-violet-500/25">Texture Pack</button>
           <button id="arcade-hub-btn" class="animate-pulse rounded-lg bg-cyan-500/20 px-6 py-2 text-sm font-black uppercase tracking-widest text-cyan-200 ring-2 ring-cyan-400/70 shadow-[0_0_22px_rgba(34,211,238,0.5)] hover:bg-cyan-500/35">🕹️ Arcade Hub</button>
           <button id="profile-btn" class="rounded-lg bg-emerald-500/15 px-6 py-2 text-sm font-bold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/25">👤 Profile</button>
@@ -254,6 +255,7 @@ app.innerHTML = `
         <nav class="mt-3 flex flex-wrap justify-center gap-3">
           <button id="ng-shop-btn" class="rounded-lg bg-yellow-500/15 px-6 py-2 text-sm font-bold text-yellow-300 ring-1 ring-yellow-400/40 hover:bg-yellow-500/25">Weapons Shop</button>
           <button id="ng-locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
+          <button id="ng-skin-shop-btn" class="rounded-lg bg-fuchsia-500/15 px-6 py-2 text-sm font-bold text-fuchsia-300 ring-1 ring-fuchsia-400/40 hover:bg-fuchsia-500/25">🎨 Skin Shop</button>
           <button id="ng-textures-btn" class="rounded-lg bg-violet-500/15 px-6 py-2 text-sm font-bold text-violet-300 ring-1 ring-violet-400/40 hover:bg-violet-500/25">Texture Pack</button>
           <button id="ng-arcade-btn" class="rounded-lg bg-cyan-500/20 px-6 py-2 text-sm font-black uppercase tracking-widest text-cyan-200 ring-2 ring-cyan-400/60 hover:bg-cyan-500/35">🕹️ Arcade Hub</button>
           <button id="ng-profile-btn" class="rounded-lg bg-emerald-500/15 px-6 py-2 text-sm font-bold text-emerald-300 ring-1 ring-emerald-400/40 hover:bg-emerald-500/25">👤 Profile</button>
@@ -299,11 +301,7 @@ app.innerHTML = `
     <div class="w-full max-w-5xl">
       <div class="flex items-baseline justify-between">
         <h2 id="arsenal-title" class="text-3xl font-black tracking-tight text-yellow-400">WEAPONS SHOP</h2>
-        <div class="text-sm font-bold text-yellow-300">Scrap: <span id="arsenal-scrap">0</span>
-          <span class="ml-3 text-cyan-300">Chips: <span id="arsenal-chips">0</span></span>
-          <span class="ml-3 text-amber-400">Amber: <span id="arsenal-amber">0</span></span>
-          <span class="ml-3 text-orange-400">Cores: <span id="arsenal-cores">0</span></span>
-        </div>
+        <div class="text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="arsenal-zcoins">0</span></div>
       </div>
       <div class="mt-4 flex gap-2 text-xs">
         <button id="slot-primary" class="rounded-lg px-4 py-1.5 font-bold">Primary</button>
@@ -433,14 +431,6 @@ function missionCard(m: Mission): HTMLElement {
                 : m.type === 'race'
                   ? '<span class="rounded-md bg-lime-500/15 px-2 py-0.5 text-[11px] font-semibold text-lime-300">Reach extraction</span>'
                   : `<span class="rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-300">${m.target} kills</span>`
-  const chips =
-    m.chapter === 2
-      ? `<span class="rounded-md bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-300">${missionChipReward(m)} chips</span>`
-      : m.chapter === 3
-        ? `<span class="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300">${missionAmberReward(m)} amber</span>`
-        : m.chapter === 4
-          ? `<span class="rounded-md bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300">${missionCoreReward(m)} cores</span>`
-          : ''
   card.innerHTML = `
     <div class="flex items-center justify-between">
       <span class="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">${missionMapName(m)}</span>
@@ -450,8 +440,7 @@ function missionCard(m: Mission): HTMLElement {
     <p class="mt-1 text-xs text-slate-400">${m.description}</p>
     <div class="mt-3 flex items-center gap-2">
       ${badge}
-      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">${missionReward(m)} scrap</span>
-      ${chips}
+      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">🪙 ${missionCoinReward(m)} Z-Coins</span>
     </div>
   `
   if (open) card.addEventListener('click', () => launch(m))
@@ -536,7 +525,7 @@ function renderChapterTwo() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-cyan-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-cyan-300">Frozen Data Chips: ${profile.chips} · enemies here have +50% health and hit 30% harder.</div>
+    <div class="mt-2 text-xs font-semibold text-cyan-300">🪙 ${profile.zcoins} Z-Coins · enemies here have +50% health and hit 30% harder.</div>
   `
   campaignEl.appendChild(header)
 
@@ -556,7 +545,7 @@ function renderChapterThree() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-lime-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-amber-300">Ancient Amber: ${profile.amber} · moss-caked infected here carry double health. Hold E (player 2: M) to haul supply crates.</div>
+    <div class="mt-2 text-xs font-semibold text-amber-300">🪙 ${profile.zcoins} Z-Coins · moss-caked infected here carry double health. Hold E (player 2: M) to haul supply crates.</div>
   `
   campaignEl.appendChild(header)
 
@@ -579,7 +568,7 @@ function renderChapterFour() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-orange-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-orange-300">Rust Cores: ${profile.cores} · scavengers here carry 2.5× health and hit 50% harder. Fueling the Rig is a mounted rail shooter — you ride the bed and aim 360°.</div>
+    <div class="mt-2 text-xs font-semibold text-orange-300">🪙 ${profile.zcoins} Z-Coins · scavengers here carry 2.5× health and hit 50% harder. Fueling the Rig is a mounted rail shooter — you ride the bed and aim 360°.</div>
   `
   campaignEl.appendChild(header)
 
@@ -1117,12 +1106,31 @@ function startCampaignFlow() {
   launch(next)
 }
 
+/** Kill earnings, still tallied as scrap (and arctic chips), paid out in Z-Coins. */
+function runCoins(scrap: number, chips: number): number {
+  return scrap * ZCOIN_RATE.scrap + chips * ZCOIN_RATE.chips
+}
+
+/** A mission's clear bonus: its scrap bounty plus its chapter bounty, in Z-Coins. */
+function missionCoinReward(m: Mission): number {
+  const chapterBonus =
+    m.chapter === 2
+      ? missionChipReward(m) * ZCOIN_RATE.chips
+      : m.chapter === 3
+        ? missionAmberReward(m) * ZCOIN_RATE.amber
+        : m.chapter === 4
+          ? missionCoreReward(m) * ZCOIN_RATE.cores
+          : 0
+  return missionReward(m) * ZCOIN_RATE.scrap + chapterBonus
+}
+
 function launch(m: Mission) {
   currentMission = m
   const roster = [characterById(activeCharacter())]
   if (profile.players === 2) roster.push(characterById(secondCharacter()))
   const loadout = [weaponById(profile.primary), weaponById(profile.secondary)]
   game.setSkin(profile.skin)
+  game.setGunSkins(profile.gunSkins)
   // The Crucible opens on the dying survivor's warning, then the swarm starts.
   if (m.type === 'arena') {
     show(menu, false)
@@ -1262,14 +1270,8 @@ function owns(id: WeaponId) {
 
 function persist() {
   saveProfile(profile)
-  el('menu-scrap').textContent = `${profile.scrap}`
-  el('arsenal-scrap').textContent = `${profile.scrap}`
-  el('menu-chips').textContent = `${profile.chips}`
-  el('arsenal-chips').textContent = `${profile.chips}`
-  el('menu-amber').textContent = `${profile.amber}`
-  el('arsenal-amber').textContent = `${profile.amber}`
-  el('menu-cores').textContent = `${profile.cores}`
-  el('arsenal-cores').textContent = `${profile.cores}`
+  el('menu-zcoins').textContent = `${profile.zcoins}`
+  el('arsenal-zcoins').textContent = `${profile.zcoins}`
   el('menu-equipped').textContent = `${weaponById(profile.primary).name} + ${
     weaponById(profile.secondary).name
   }`
@@ -1308,19 +1310,8 @@ function slotWeapons(): Weapon[] {
   return arsenalMode === 'shop' ? inSlot : inSlot.filter((w) => owns(w.id))
 }
 
-/** Price label for a weapon in whichever currency it is sold in. */
 function priceLabel(w: Weapon): string {
-  if (w.currency === 'chips') return `${w.price} chips`
-  if (w.currency === 'amber') return `${w.price} amber`
-  if (w.currency === 'cores') return `${w.price} cores`
-  return `${w.price} scrap`
-}
-
-function balanceFor(w: Weapon): number {
-  if (w.currency === 'chips') return profile.chips
-  if (w.currency === 'amber') return profile.amber
-  if (w.currency === 'cores') return profile.cores
-  return profile.scrap
+  return `${zcoinPrice(w)} Z-Coins`
 }
 
 function equippedIn(w: Weapon) {
@@ -1405,7 +1396,7 @@ function renderDetail() {
   } else {
     detailAction.textContent = `Buy — ${priceLabel(w)}`
     detailAction.disabled = false
-    const affordable = balanceFor(w) >= w.price
+    const affordable = profile.zcoins >= zcoinPrice(w)
     detailAction.className = `mt-4 w-full rounded-lg px-4 py-3 text-sm font-bold ${
       w.currency === 'amber'
         ? affordable
@@ -1430,24 +1421,12 @@ detailAction.addEventListener('click', () => {
   const w = selectedWeapon
   if (owns(w.id)) {
     profile[w.slot] = w.id
-  } else if (balanceFor(w) >= w.price) {
-    if (w.currency === 'chips') profile.chips -= w.price
-    else if (w.currency === 'amber') profile.amber -= w.price
-    else if (w.currency === 'cores') profile.cores -= w.price
-    else profile.scrap -= w.price
+  } else if (profile.zcoins >= zcoinPrice(w)) {
+    profile.zcoins -= zcoinPrice(w)
     profile.owned.push(w.id)
     profile[w.slot] = w.id
   } else {
-    const short = w.price - balanceFor(w)
-    const unit =
-      w.currency === 'chips'
-        ? 'data chips'
-        : w.currency === 'amber'
-          ? 'ancient amber'
-          : w.currency === 'cores'
-            ? 'rust cores'
-            : 'scrap'
-    detailNote.textContent = `Need ${short} more ${unit}.`
+    detailNote.textContent = `Need ${zcoinPrice(w) - profile.zcoins} more Z-Coins.`
     return
   }
   persist()
@@ -1482,11 +1461,15 @@ const arcade = mountArcade(leaveCabinet)
 const voidBlast = mountVoidBlast(leaveCabinet)
 const gauntlet = mountEndlessGauntlet(leaveCabinet)
 const rotFighter = mountFightingArcade(leaveCabinet)
-const horde = mountEndlessHorde(leaveCabinet, () => {
-  cameFromHub = false
-  backToMenu()
-  playMusic('menu')
-})
+const horde = mountEndlessHorde(
+  leaveCabinet,
+  () => {
+    cameFromHub = false
+    backToMenu()
+    playMusic('menu')
+  },
+  () => profile.gunSkins,
+)
 
 const CABINETS: Record<ArcadeGameId, () => void> = {
   'crimson-highway': () => arcade.open(),
@@ -1521,7 +1504,19 @@ el('arcade-hub-btn').addEventListener('click', () => enterCabinet(() => arcadeHu
 // Mirror every local save into Firestore once an account is signed in.
 startCloudSync()
 
-const settingsPanel = mountSettings({ profile: () => profile, save: persist })
+const skinShop = mountSkinShop({ profile: () => profile, save: persist })
+const openSkinShop = () => {
+  resumeAudio()
+  skinShop.open()
+}
+el('skin-shop-btn').addEventListener('click', openSkinShop)
+el('ng-skin-shop-btn').addEventListener('click', openSkinShop)
+registerCoinSink((amount) => {
+  profile.zcoins += amount
+  persist()
+})
+
+const settingsPanel = mountSettings({ profile: () => profile, save: persist, openShop: openSkinShop })
 el('settings-btn').addEventListener('click', () => {
   resumeAudio()
   settingsPanel.open()
@@ -1592,34 +1587,15 @@ game.onStateChange = (state: GameState) => {
     if (!profile.completed.includes(currentMission.id)) profile.completed.push(currentMission.id)
   }
   if (state === 'won' || state === 'lost') {
-    const bonus = state === 'won' ? missionReward(currentMission) : 0
-    const total = game.scrapEarned + bonus
-    profile.scrap += total
-    // Data chips only ever come out of the arctic chapter.
-    const chipBonus =
-      state === 'won' && currentMission.chapter === 2 ? missionChipReward(currentMission) : 0
-    const chipTotal = currentMission.chapter === 2 ? game.chipsEarned + chipBonus : 0
-    profile.chips += chipTotal
-    // Ancient Amber is paid out only for clearing a jungle stage.
-    const amberTotal =
-      state === 'won' && currentMission.chapter === 3 ? missionAmberReward(currentMission) : 0
-    profile.amber += amberTotal
-    // Rust Cores are salvaged only out of the Rustlands.
-    const coreTotal =
-      state === 'won' && currentMission.chapter === 4 ? missionCoreReward(currentMission) : 0
-    profile.cores += coreTotal
+    const fromKills = runCoins(game.scrapEarned, currentMission.chapter === 2 ? game.chipsEarned : 0)
+    const bonus = state === 'won' ? missionCoinReward(currentMission) : 0
+    const total = fromKills + bonus
+    profile.zcoins += total
     persist()
-    const chipText = chipTotal
-      ? ` · +${chipTotal} frozen data chips`
-      : amberTotal
-        ? ` · +${amberTotal} ancient amber`
-        : coreTotal
-          ? ` · +${coreTotal} rust cores`
-          : ''
     const rewardText =
       state === 'won'
-        ? `+${total} scrap earned (${game.scrapEarned} from kills, ${bonus} mission bonus)${chipText}`
-        : `+${total} scrap salvaged from kills${chipText}`
+        ? `+${total} Z-Coins earned (${fromKills} from kills, ${bonus} mission bonus)`
+        : `+${total} Z-Coins salvaged from kills`
     el(state === 'won' ? 'win-reward' : 'lose-reward').textContent = rewardText
     el(state === 'won' ? 'win-summary' : 'lose-summary').innerHTML = combatSummaryHtml(game.combatStats())
   }
@@ -1964,7 +1940,7 @@ game.onHud = (h: Hud) => {
 
   hudWeapon.textContent = h.weaponName
   hudPerk.textContent = h.perkName ? `Talent: ${h.perkName}` : 'No talent'
-  hudScrap.textContent = h.chips ? `+${h.scrap} scrap · +${h.chips} chips` : `+${h.scrap} scrap`
+  hudScrap.textContent = `+${runCoins(h.scrap, h.chips)} Z-Coins`
 }
 
 // Developer cheat code: type "cheat" on the mission board for the prompt.
@@ -1972,10 +1948,7 @@ bindCheatCodes({
   active: () => !menu.classList.contains('hidden'),
   unlockAll: () => {
     profile.completed = MISSIONS.map((m) => m.id)
-    profile.scrap += CHEAT_CURRENCY
-    profile.chips += CHEAT_CURRENCY
-    profile.amber += CHEAT_CURRENCY
-    profile.cores += CHEAT_CURRENCY
+    profile.zcoins += CHEAT_CURRENCY * (ZCOIN_RATE.scrap + ZCOIN_RATE.chips + ZCOIN_RATE.amber + ZCOIN_RATE.cores)
     persist()
     renderCampaign()
     renderArsenal()

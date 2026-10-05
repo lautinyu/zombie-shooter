@@ -40,6 +40,8 @@ export type Tab = 'profile' | 'audio' | 'controls'
 export interface LockerHost {
   profile: () => Profile
   save: () => void
+  /** Opens the Skin Shop on top of the settings panel. */
+  openShop?: () => void
 }
 
 /** The slot currently listening for the next key or mouse button. */
@@ -180,14 +182,17 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
     const cards = [
       card('0', null, 'Survivor', "Your survivor's own outfit.", 'ring-slate-300', 'text-slate-200', true, ''),
       ...SURVIVOR_SKINS.map((skin, i) =>
-        card(`${i + 1}`, skin.id, skin.name, skin.blurb, skin.ring, skin.text, skinUnlocked(skin, cleared, ngPlus), skinUnlockHint(skin)),
+        card(i < 9 ? `${i + 1}` : '·', skin.id, skin.name, skin.blurb, skin.ring, skin.text, skinUnlocked(skin, cleared, ngPlus, profile.ownedSkins), skinUnlockHint(skin)),
       ),
     ].join('')
     return `
       <div class="mb-6 rounded-xl bg-white/5 p-4 ring-1 ring-white/10">
         <div class="flex items-baseline justify-between gap-3">
           <div class="text-xs font-black uppercase tracking-widest text-slate-300">Locker / Character Skins</div>
-          <div class="text-[10px] uppercase tracking-widest text-slate-500">Press 0–${SURVIVOR_SKINS.length} to equip</div>
+          <div class="flex items-center gap-3">
+            <div class="text-[10px] uppercase tracking-widest text-slate-500">Press 0–${Math.min(9, SURVIVOR_SKINS.length)} to equip</div>
+            <button id="locker-open-shop" class="rounded-md bg-fuchsia-500/20 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-fuchsia-200 ring-1 ring-fuchsia-400/40 hover:bg-fuchsia-500/30">🎨 Skin Shop · 🪙 ${profile.zcoins}</button>
+          </div>
         </div>
         <p class="mt-1 text-[11px] text-slate-500">Worn by Player 1 in campaign missions. Saved with your profile and cloud save.</p>
         <div class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">${cards}</div>
@@ -199,7 +204,7 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
     const cleared = campaignCleared(profile)
     const ngPlus = ngPlusUnlocked(profile)
     const skin = SURVIVOR_SKINS.find((s) => s.id === value)
-    if (value !== 'default' && (!skin || !skinUnlocked(skin, cleared, ngPlus))) return
+    if (value !== 'default' && (!skin || !skinUnlocked(skin, cleared, ngPlus, profile.ownedSkins))) return
     const next = skin ? skin.id : null
     if (profile.skin === next) return
     profile.skin = next
@@ -367,6 +372,10 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
     for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-skin]')) {
       button.addEventListener('click', () => equipSkin(button.dataset.skin))
     }
+    panel.querySelector('#locker-open-shop')?.addEventListener('click', () => {
+      close()
+      locker.openShop?.()
+    })
     drawSkinPreviews()
 
     for (const button of panel.querySelectorAll<HTMLButtonElement>('[data-avatar]')) {
@@ -513,7 +522,7 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
         const slot = /^Digit(\d)$/.exec(e.code)
         if (tab === 'profile' && slot && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
           const index = Number(slot[1])
-          if (index <= SURVIVOR_SKINS.length) {
+          if (index <= Math.min(9, SURVIVOR_SKINS.length)) {
             e.preventDefault()
             e.stopPropagation()
             equipSkin(index === 0 ? 'default' : SURVIVOR_SKINS[index - 1].id)

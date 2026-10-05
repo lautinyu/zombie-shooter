@@ -31,6 +31,8 @@ import type { FlowField } from './nav'
 import { drawCharacterSkin } from './skins'
 import type { SurvivorSkinId } from './survivorSkins'
 import { drawSurvivor } from './survivorSkins'
+import type { GunSkinId } from './gunSkins'
+import { paintGun } from './gunSkins'
 import type { LiveWireSpec } from './maps'
 import type { CombatStats } from './combatSummary'
 import { emptyCombatStats } from './combatSummary'
@@ -120,7 +122,7 @@ interface LoadoutSlot {
   reserve: number
 }
 
-export type EnemyKind = 'zombie' | 'bug' | 'runner' | 'camo' | 'drone' | 'turret' | 'guard'
+export type EnemyKind = 'zombie' | 'bug' | 'runner' | 'camo' | 'drone' | 'turret' | 'guard' | 'spitter' | 'exploder'
 
 interface Enemy {
   kind: EnemyKind
@@ -148,6 +150,9 @@ interface Enemy {
   stun: number
   /** Seconds left of a cryo bullet's movement slow. */
   slow: number
+  /** Exploder fuse: seconds until it goes off once lit. */
+  fuse?: number
+  detonated?: boolean
 }
 
 /** An NG+ bulkhead door, solid until a player hacks its panel. */
@@ -793,6 +798,23 @@ const UFO_TERMINAL_TIME = 6
 const UFO_ZOMBIE_CHANCE = 0.12
 /** Share of the rest that are drones rather than infected alien guards. */
 const UFO_DRONE_CHANCE = 0.55
+/** Share of UFO spawns that are acid Spitters, and sprinting Exploders. */
+const UFO_SPITTER_CHANCE = 0.1
+const UFO_EXPLODER_CHANCE = 0.1
+const SPITTER_HP = 90
+const SPITTER_SPEED = 90
+const SPITTER_HOLD = 230
+const SPITTER_RANGE = 440
+const SPITTER_INTERVAL = 2.6
+const SPITTER_ACID_SPEED = 260
+const SPITTER_ACID_DAMAGE = 9
+const EXPLODER_HP = 70
+const EXPLODER_SPEED = 175
+const EXPLODER_TRIGGER = 22
+const EXPLODER_FUSE = 0.45
+const EXPLODER_RADIUS = 100
+const EXPLODER_DAMAGE = 28
+const EXPLODER_SPLASH = 140
 /** Bodies the ship keeps in the air at once, before mission density. */
 const UFO_MAX_ALIVE = 16
 /** Seconds between security spawns, before mission density. */
@@ -1269,6 +1291,9 @@ export class Game {
   private hackBeep = 0
   /** Locker skin for player 1; null draws the survivor's own outfit. */
   private skin: SurvivorSkinId | null = null
+  private gunSkins: { primary: GunSkinId | null; secondary: GunSkinId | null } = { primary: null, secondary: null }
+  /** Exploder blasts queued during enemy updates, set off once the loop is done. */
+  private pendingBlasts: { x: number; y: number }[] = []
   /** Seconds of eased camera motion left after the cinematic hands back. */
   private cameraEase = 0
 
@@ -1467,6 +1492,11 @@ export class Game {
    */
   setSkin(skin: SurvivorSkinId | null) {
     this.skin = skin
+  }
+
+  /** Cosmetic camos for player 1's primary and secondary; no gameplay effect. */
+  setGunSkins(skins: { primary: GunSkinId | null; secondary: GunSkinId | null }) {
+    this.gunSkins = { ...skins }
   }
 
   /** End-of-run combat tallies for the summary screen. */
@@ -3493,6 +3523,33 @@ export class Game {
    * A shot fuel drum: heavy falloff damage to the swarm and the boss, a light
    * singe for anyone standing too close, and neighbouring drums chain.
    */
+  /** An Exploder going off: hurts players and tears into nearby enemies. */
+  private detonateExploders() {
+    for (let next = this.pendingBlasts.shift(); next; next = this.pendingBlasts.shift()) {
+      const { x, y } = next
+      const r = EXPLODER_RADIUS
+      this.blasts.push({ x, y, r, life: BLAST_LIFE, maxLife: BLAST_LIFE })
+      this.shake = Math.max(this.shake, 0.7)
+      playSfx('explosion')
+      const falloff = (dist: number) => Math.max(0.4, 1 - dist / r)
+      for (let i = this.enemies.length - 1; i >= 0; i--) {
+        const e = this.enemies[i]
+        if (!e) continue
+        const d = Math.hypot(e.x - x, e.y - y)
+        if (d > r + e.r) continue
+        e.hp -= EXPLODER_SPLASH * falloff(d) * this.enemyArmour
+        if (e.hp <= 0) this.killEnemy(i)
+      }
+      for (const p of this.alivePlayers) {
+        const d = Math.hypot(p.x - x, p.y - y)
+        if (d < r + p.r) {
+          this.damagePlayer(p, EXPLODER_DAMAGE * falloff(d) * this.damageScale)
+          p.safeTimer = 0
+        }
+      }
+    }
+  }
+
   private explodeBarrel(x: number, y: number, depth = 0) {
     const r = BARREL_BLAST_RADIUS
     this.blasts.push({ x, y, r, life: BLAST_LIFE, maxLife: BLAST_LIFE })
@@ -3534,6 +3591,10 @@ export class Game {
     const z = this.enemies[index]
     this.enemies.splice(index, 1)
     this.kills += 1
+    if (z.kind === 'exploder' && !z.detonated) {
+      z.detonated = true
+      this.pendingBlasts.push({ x: z.x, y: z.y })
+    }
     if (byAbility) this.stats.abilityKills += 1
     this.scrapEarned += z.kind === 'bug' ? SCRAP_PER_BUG : SCRAP_PER_KILL
     // Cold-weather mutations are the only source of chips outside missions.
@@ -4474,6 +4535,33 @@ export class Game {
         }
       }
 
+      // Spitters hang back and lob infectious acid from range.
+      if (z.kind === 'spitter') {
+        if (d < SPITTER_HOLD) z.retreat = 0.4
+        if (z.attackCooldown === 0 && d < SPITTER_RANGE && this.hasLineOfSight(z, target)) {
+          this.spitAcid(z, target)
+          z.attackCooldown = SPITTER_INTERVAL
+        }
+      }
+
+      // Exploders sprint in, light a short fuse on contact, then go off.
+      if (z.kind === 'exploder') {
+        if (z.fuse !== undefined) {
+          z.fuse -= dt
+          if (z.fuse <= 0 && !z.detonated) {
+            z.detonated = true
+            this.pendingBlasts.push({ x: z.x, y: z.y })
+            this.enemies.splice(i, 1)
+          }
+          continue
+        }
+        if (target.player && d < z.r + target.player.r + EXPLODER_TRIGGER) {
+          z.fuse = EXPLODER_FUSE
+          playSfx('fuse')
+          continue
+        }
+      }
+
       // Convoy crawlers are the ranged threat: they hold off the chassis and
       // spit into the bed, so their damage lands on the players, not the rig.
       if (this.railMode && z.kind === 'bug') {
@@ -4548,6 +4636,21 @@ export class Game {
         }
       }
     }
+    this.detonateExploders()
+  }
+
+  private spitAcid(z: Enemy, target: { x: number; y: number }) {
+    const a = Math.atan2(target.y - z.y, target.x - z.x)
+    this.venom.push({
+      x: z.x + Math.cos(a) * (z.r + 6),
+      y: z.y + Math.sin(a) * (z.r + 6),
+      vx: Math.cos(a) * SPITTER_ACID_SPEED,
+      vy: Math.sin(a) * SPITTER_ACID_SPEED,
+      r: 7,
+      life: VENOM_LIFE,
+      damage: SPITTER_ACID_DAMAGE * this.damageScale,
+    })
+    playSfx('acid-spit')
   }
 
   /** Ship security fires plasma: it burns, but it carries no infection. */
@@ -4946,6 +5049,9 @@ export class Game {
     // Aboard the ship it is the crew that fights: drones and infected guards,
     // with only the occasional infected that came up in the beam with you.
     if (this.mission?.ngPlus) {
+      const special = Math.random()
+      if (special < UFO_SPITTER_CHANCE) return this.makeSpitter(spot)
+      if (special < UFO_SPITTER_CHANCE + UFO_EXPLODER_CHANCE) return this.makeExploder(spot)
       if (Math.random() < UFO_ZOMBIE_CHANCE) return this.makeZombie(spot)
       return Math.random() < UFO_DRONE_CHANCE ? this.makeDrone(spot) : this.makeGuard(spot)
     }
@@ -5081,6 +5187,56 @@ export class Game {
       vision: PLASMA_RANGE,
       aware: true,
       driftAngle: 0,
+      revealed: true,
+      stun: 0,
+      slow: 0,
+    }
+  }
+
+  private makeSpitter(spot: { x: number; y: number }): Enemy {
+    return {
+      kind: 'spitter',
+      x: spot.x,
+      y: spot.y,
+      r: 14,
+      hp: SPITTER_HP * this.hpScale,
+      maxHp: SPITTER_HP * this.hpScale,
+      speed: 0,
+      baseSpeed: SPITTER_SPEED + Math.random() * 15,
+      attackCooldown: 1 + Math.random(),
+      wobble: Math.random() * 10,
+      retreat: 0,
+      poison: 0,
+      poisonStacks: 0,
+      burn: 0,
+      vision: ZOMBIE_VISION * 1.2,
+      aware: false,
+      driftAngle: Math.random() * Math.PI * 2,
+      revealed: true,
+      stun: 0,
+      slow: 0,
+    }
+  }
+
+  private makeExploder(spot: { x: number; y: number }): Enemy {
+    return {
+      kind: 'exploder',
+      x: spot.x,
+      y: spot.y,
+      r: 15,
+      hp: EXPLODER_HP * this.hpScale,
+      maxHp: EXPLODER_HP * this.hpScale,
+      speed: 0,
+      baseSpeed: EXPLODER_SPEED + Math.random() * 20,
+      attackCooldown: 0,
+      wobble: Math.random() * 10,
+      retreat: 0,
+      poison: 0,
+      poisonStacks: 0,
+      burn: 0,
+      vision: ZOMBIE_VISION * 1.3,
+      aware: false,
+      driftAngle: Math.random() * Math.PI * 2,
       revealed: true,
       stun: 0,
       slow: 0,
@@ -5259,6 +5415,8 @@ export class Game {
       else if (e.kind === 'drone') this.drawDrone(e)
       else if (e.kind === 'turret') this.drawAlienTurret(e)
       else if (e.kind === 'guard') this.drawGuard(e)
+      else if (e.kind === 'spitter') this.drawSpitter(e)
+      else if (e.kind === 'exploder') this.drawExploder(e)
       else this.drawZombie(e)
       if (e.stun > 0) this.drawStun(e)
     }
@@ -7508,6 +7666,58 @@ export class Game {
   }
 
   /** The Runner: small, bright red, with motion streaks behind it. */
+  private drawSpitter(z: Enemy) {
+    const ctx = this.ctx
+    this.drawStatusRing(z)
+    const y = this.textures === 'enhanced' ? z.y - UNIT_LIFT : z.y
+    this.drawReachingHands(z, y, this.enemySkinColor('#4d7c0f'), '#1a2e05')
+    ctx.beginPath()
+    ctx.arc(z.x, y, z.r, 0, Math.PI * 2)
+    ctx.fillStyle = '#4d7c0f'
+    ctx.fill()
+    ctx.strokeStyle = '#1a2e05'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    const load = 1 - Math.min(1, z.attackCooldown / SPITTER_INTERVAL)
+    ctx.beginPath()
+    ctx.arc(z.x, y - z.r * 0.15, z.r * (0.4 + 0.18 * load), 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(190,242,100,${0.55 + 0.4 * load})`
+    ctx.fill()
+    ctx.fillStyle = 'rgba(163,230,53,0.8)'
+    ctx.fillRect(z.x - 1.5, y + z.r * 0.3, 3, 4 + Math.sin(z.wobble * 3) * 2)
+    this.drawMutationSkin(z, y, z.r)
+  }
+
+  private drawExploder(z: Enemy) {
+    const ctx = this.ctx
+    this.drawStatusRing(z)
+    const y = this.textures === 'enhanced' ? z.y - UNIT_LIFT : z.y
+    const lit = z.fuse !== undefined
+    const pulse = lit ? 0.5 + 0.5 * Math.sin(z.wobble * 50) : 0.5 + 0.3 * Math.sin(z.wobble * 6)
+    this.drawReachingHands(z, y, this.enemySkinColor('#c2410c'), '#431407')
+    ctx.beginPath()
+    ctx.arc(z.x, y, z.r, 0, Math.PI * 2)
+    ctx.fillStyle = lit && pulse > 0.7 ? '#fef3c7' : '#9a3412'
+    ctx.fill()
+    ctx.strokeStyle = '#431407'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.fillStyle = `rgba(251,146,60,${pulse})`
+    for (const [ox, oy] of [[-0.4, -0.3], [0.35, -0.35], [0, 0.4], [-0.1, -0.05]]) {
+      ctx.beginPath()
+      ctx.arc(z.x + z.r * ox, y + z.r * oy, z.r * 0.24, 0, Math.PI * 2)
+      ctx.fill()
+    }
+    if (z.fuse !== undefined) {
+      ctx.strokeStyle = `rgba(254,240,138,${pulse})`
+      ctx.lineWidth = 3
+      ctx.beginPath()
+      ctx.arc(z.x, y, z.r + 5 + (1 - z.fuse / EXPLODER_FUSE) * 10, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+    this.drawMutationSkin(z, y, z.r)
+  }
+
   private drawRunner(z: Enemy) {
     const ctx = this.ctx
     this.drawStatusRing(z)
@@ -7735,8 +7945,8 @@ export class Game {
         ctx.arc(p.r + 300, 0, 2.5, 0, Math.PI * 2)
         ctx.fill()
       }
-      ctx.fillStyle = '#e5e7eb'
-      ctx.fillRect(p.r - 4 - kick, -4, 22, 8)
+      const camo = p.id === 1 ? this.gunSkins[p.weapon.slot] : null
+      paintGun(ctx, camo, p.r - 4 - kick, -4, 22, 8, '#e5e7eb', this.last / 1000)
     }
     ctx.restore()
 
@@ -7903,7 +8113,11 @@ export class Game {
                 ? '#8b5cf6'
                 : e.kind === 'guard'
                   ? '#a78bfa'
-                  : '#d62828'
+                  : e.kind === 'spitter'
+                    ? '#a3e635'
+                    : e.kind === 'exploder'
+                      ? '#fb923c'
+                      : '#d62828'
       ctx.beginPath()
       ctx.arc(mx + e.x * s, my + e.y * s, e.kind === 'zombie' ? 2.5 : 2, 0, Math.PI * 2)
       ctx.fill()
