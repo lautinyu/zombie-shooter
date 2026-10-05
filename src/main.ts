@@ -29,7 +29,6 @@ import {
 } from './weapons'
 import type { Weapon, WeaponId, WeaponSlot } from './weapons'
 import {
-  ZCOIN_RATE,
   loadProfile,
   missionAmberReward,
   missionChipReward,
@@ -38,7 +37,6 @@ import {
   ngPlusUnlocked,
   registerCoinSink,
   saveProfile,
-  zcoinPrice,
 } from './profile'
 import { CHARACTERS, characterById } from './characters'
 import type { CharacterId } from './characters'
@@ -196,7 +194,12 @@ app.innerHTML = `
           <span id="profile-avatar" class="text-xl leading-none">🧟</span>
           <span id="profile-name-label">Set Profile</span>
         </button>
-        <div class="mt-2 text-center text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="menu-zcoins">0</span> · <span class="text-slate-300">🔩 Scrap: <span id="menu-scrap">0</span></span> · <span class="text-orange-300">🟠 Amber: <span id="menu-amber">0</span></span></div>
+        <div class="mt-2 text-center text-sm font-bold text-yellow-300">Scrap: <span id="menu-scrap">0</span>
+          <span class="ml-3 text-cyan-300">Frozen Data Chips: <span id="menu-chips">0</span></span>
+          <span class="ml-3 text-amber-400">Ancient Amber: <span id="menu-amber">0</span></span>
+          <span class="ml-3 text-orange-400">Rust Cores: <span id="menu-cores">0</span></span>
+          <span class="ml-3 text-yellow-200">🪙 Z-Coins: <span id="menu-zcoins">0</span></span>
+        </div>
         <nav class="mt-3 flex flex-wrap justify-center gap-3">
           <button id="shop-btn" class="rounded-lg bg-yellow-500/15 px-6 py-2 text-sm font-bold text-yellow-300 ring-1 ring-yellow-400/40 hover:bg-yellow-500/25">Weapons Shop</button>
           <button id="locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
@@ -301,7 +304,12 @@ app.innerHTML = `
     <div class="w-full max-w-5xl">
       <div class="flex items-baseline justify-between">
         <h2 id="arsenal-title" class="text-3xl font-black tracking-tight text-yellow-400">WEAPONS SHOP</h2>
-        <div class="text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="arsenal-zcoins">0</span> · <span class="text-slate-300">🔩 Scrap: <span id="arsenal-scrap">0</span></span> · <span class="text-orange-300">🟠 Amber: <span id="arsenal-amber">0</span></span></div>
+        <div class="text-sm font-bold text-yellow-300">Scrap: <span id="arsenal-scrap">0</span>
+          <span class="ml-3 text-cyan-300">Chips: <span id="arsenal-chips">0</span></span>
+          <span class="ml-3 text-amber-400">Amber: <span id="arsenal-amber">0</span></span>
+          <span class="ml-3 text-orange-400">Cores: <span id="arsenal-cores">0</span></span>
+          <span class="ml-3 text-yellow-200">🪙 Z-Coins: <span id="arsenal-zcoins">0</span></span>
+        </div>
       </div>
       <div class="mt-4 flex gap-2 text-xs">
         <button id="slot-primary" class="rounded-lg px-4 py-1.5 font-bold">Primary</button>
@@ -431,6 +439,14 @@ function missionCard(m: Mission): HTMLElement {
                 : m.type === 'race'
                   ? '<span class="rounded-md bg-lime-500/15 px-2 py-0.5 text-[11px] font-semibold text-lime-300">Reach extraction</span>'
                   : `<span class="rounded-md bg-red-500/15 px-2 py-0.5 text-[11px] font-semibold text-red-300">${m.target} kills</span>`
+  const chips =
+    m.chapter === 2
+      ? `<span class="rounded-md bg-cyan-500/15 px-2 py-0.5 text-[11px] font-semibold text-cyan-300">${missionChipReward(m)} chips</span>`
+      : m.chapter === 3
+        ? `<span class="rounded-md bg-amber-500/15 px-2 py-0.5 text-[11px] font-semibold text-amber-300">${missionAmberReward(m)} amber</span>`
+        : m.chapter === 4
+          ? `<span class="rounded-md bg-orange-500/15 px-2 py-0.5 text-[11px] font-semibold text-orange-300">${missionCoreReward(m)} cores</span>`
+          : ''
   card.innerHTML = `
     <div class="flex items-center justify-between">
       <span class="text-[11px] font-semibold uppercase tracking-wider text-emerald-400">${missionMapName(m)}</span>
@@ -440,7 +456,8 @@ function missionCard(m: Mission): HTMLElement {
     <p class="mt-1 text-xs text-slate-400">${m.description}</p>
     <div class="mt-3 flex items-center gap-2">
       ${badge}
-      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">🔩 ${missionReward(m)} Scrap${missionBonusAmber(m) ? ` · 🟠 ${missionBonusAmber(m)} Amber` : ''}</span>
+      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">${missionReward(m)} scrap</span>
+      ${chips}
     </div>
   `
   if (open) card.addEventListener('click', () => launch(m))
@@ -525,7 +542,7 @@ function renderChapterTwo() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-cyan-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-cyan-300">🪙 ${profile.zcoins} Z-Coins · enemies here have +50% health and hit 30% harder.</div>
+    <div class="mt-2 text-xs font-semibold text-cyan-300">Frozen Data Chips: ${profile.chips} · enemies here have +50% health and hit 30% harder.</div>
   `
   campaignEl.appendChild(header)
 
@@ -545,7 +562,7 @@ function renderChapterThree() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-lime-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-amber-300">🪙 ${profile.zcoins} Z-Coins · moss-caked infected here carry double health. Hold E (player 2: M) to haul supply crates.</div>
+    <div class="mt-2 text-xs font-semibold text-amber-300">Ancient Amber: ${profile.amber} · moss-caked infected here carry double health. Hold E (player 2: M) to haul supply crates.</div>
   `
   campaignEl.appendChild(header)
 
@@ -568,7 +585,7 @@ function renderChapterFour() {
   header.innerHTML = `
     <h3 class="text-sm font-black uppercase tracking-wider text-orange-200">${info.title}</h3>
     <p class="mt-1 text-xs text-slate-400">${info.blurb}</p>
-    <div class="mt-2 text-xs font-semibold text-orange-300">🪙 ${profile.zcoins} Z-Coins · scavengers here carry 2.5× health and hit 50% harder. Fueling the Rig is a mounted rail shooter — you ride the bed and aim 360°.</div>
+    <div class="mt-2 text-xs font-semibold text-orange-300">Rust Cores: ${profile.cores} · scavengers here carry 2.5× health and hit 50% harder. Fueling the Rig is a mounted rail shooter — you ride the bed and aim 360°.</div>
   `
   campaignEl.appendChild(header)
 
@@ -1106,14 +1123,6 @@ function startCampaignFlow() {
   launch(next)
 }
 
-/** A mission's chapter bounty, paid in Amber on top of its Scrap reward. */
-function missionBonusAmber(m: Mission): number {
-  if (m.chapter === 2) return missionChipReward(m)
-  if (m.chapter === 3) return missionAmberReward(m)
-  if (m.chapter === 4) return missionCoreReward(m)
-  return 0
-}
-
 function launch(m: Mission) {
   currentMission = m
   const roster = [characterById(activeCharacter())]
@@ -1264,7 +1273,9 @@ function persist() {
   el('arsenal-zcoins').textContent = `${profile.zcoins}`
   for (const pre of ['menu', 'arsenal']) {
     el(`${pre}-scrap`).textContent = `${profile.scrap}`
+    el(`${pre}-chips`).textContent = `${profile.chips}`
     el(`${pre}-amber`).textContent = `${profile.amber}`
+    el(`${pre}-cores`).textContent = `${profile.cores}`
   }
   el('menu-equipped').textContent = `${weaponById(profile.primary).name} + ${
     weaponById(profile.secondary).name
@@ -1304,8 +1315,16 @@ function slotWeapons(): Weapon[] {
   return arsenalMode === 'shop' ? inSlot : inSlot.filter((w) => owns(w.id))
 }
 
+/** Price label for a weapon in whichever currency it is sold in. */
 function priceLabel(w: Weapon): string {
-  return w.currency === 'scrap' ? `${zcoinPrice(w)} Z-Coins` : `${zcoinPrice(w)} Z-Coins (${w.price} Amber)`
+  if (w.currency === 'chips') return `${w.price} chips`
+  if (w.currency === 'amber') return `${w.price} amber`
+  if (w.currency === 'cores') return `${w.price} cores`
+  return `${w.price} scrap`
+}
+
+function balanceFor(w: Weapon): number {
+  return profile[w.currency]
 }
 
 function equippedIn(w: Weapon) {
@@ -1390,7 +1409,7 @@ function renderDetail() {
   } else {
     detailAction.textContent = `Buy — ${priceLabel(w)}`
     detailAction.disabled = false
-    const affordable = profile.zcoins >= zcoinPrice(w)
+    const affordable = balanceFor(w) >= w.price
     detailAction.className = `mt-4 w-full rounded-lg px-4 py-3 text-sm font-bold ${
       w.currency === 'amber'
         ? affordable
@@ -1415,12 +1434,21 @@ detailAction.addEventListener('click', () => {
   const w = selectedWeapon
   if (owns(w.id)) {
     profile[w.slot] = w.id
-  } else if (profile.zcoins >= zcoinPrice(w)) {
-    profile.zcoins -= zcoinPrice(w)
+  } else if (balanceFor(w) >= w.price) {
+    profile[w.currency] -= w.price
     profile.owned.push(w.id)
     profile[w.slot] = w.id
   } else {
-    detailNote.textContent = `Need ${zcoinPrice(w) - profile.zcoins} more Z-Coins.`
+    const short = w.price - balanceFor(w)
+    const unit =
+      w.currency === 'chips'
+        ? 'data chips'
+        : w.currency === 'amber'
+          ? 'ancient amber'
+          : w.currency === 'cores'
+            ? 'rust cores'
+            : 'scrap'
+    detailNote.textContent = `Need ${short} more ${unit}.`
     return
   }
   persist()
@@ -1581,17 +1609,34 @@ game.onStateChange = (state: GameState) => {
     if (!profile.completed.includes(currentMission.id)) profile.completed.push(currentMission.id)
   }
   if (state === 'won' || state === 'lost') {
-    const won = state === 'won'
-    const scrapGain = game.scrapEarned + (won ? missionReward(currentMission) : 0)
-    const amberGain =
-      (currentMission.chapter === 2 ? game.chipsEarned : 0) + (won ? missionBonusAmber(currentMission) : 0)
-    profile.scrap += scrapGain
-    profile.amber += amberGain
+    const bonus = state === 'won' ? missionReward(currentMission) : 0
+    const total = game.scrapEarned + bonus
+    profile.scrap += total
+    // Data chips only ever come out of the arctic chapter.
+    const chipBonus =
+      state === 'won' && currentMission.chapter === 2 ? missionChipReward(currentMission) : 0
+    const chipTotal = currentMission.chapter === 2 ? game.chipsEarned + chipBonus : 0
+    profile.chips += chipTotal
+    // Ancient Amber is paid out only for clearing a jungle stage.
+    const amberTotal =
+      state === 'won' && currentMission.chapter === 3 ? missionAmberReward(currentMission) : 0
+    profile.amber += amberTotal
+    // Rust Cores are salvaged only out of the Rustlands.
+    const coreTotal =
+      state === 'won' && currentMission.chapter === 4 ? missionCoreReward(currentMission) : 0
+    profile.cores += coreTotal
     persist()
-    const gains = `+${scrapGain} Scrap${amberGain ? ` · +${amberGain} Amber` : ''}`
-    const rewardText = won
-      ? `${gains} earned. Trade them for Z-Coins at the Shop exchange.`
-      : `${gains} salvaged from kills`
+    const chipText = chipTotal
+      ? ` · +${chipTotal} frozen data chips`
+      : amberTotal
+        ? ` · +${amberTotal} ancient amber`
+        : coreTotal
+          ? ` · +${coreTotal} rust cores`
+          : ''
+    const rewardText =
+      state === 'won'
+        ? `+${total} scrap earned (${game.scrapEarned} from kills, ${bonus} mission bonus)${chipText}`
+        : `+${total} scrap salvaged from kills${chipText}`
     el(state === 'won' ? 'win-reward' : 'lose-reward').textContent = rewardText
     el(state === 'won' ? 'win-summary' : 'lose-summary').innerHTML = combatSummaryHtml(game.combatStats())
   }
@@ -1936,7 +1981,7 @@ game.onHud = (h: Hud) => {
 
   hudWeapon.textContent = h.weaponName
   hudPerk.textContent = h.perkName ? `Talent: ${h.perkName}` : 'No talent'
-  hudScrap.textContent = `+${h.scrap} Scrap${h.chips ? ` · +${h.chips} Amber` : ''}`
+  hudScrap.textContent = h.chips ? `+${h.scrap} scrap · +${h.chips} chips` : `+${h.scrap} scrap`
 }
 
 // Developer cheat code: type "cheat" on the mission board for the prompt.
@@ -1945,8 +1990,10 @@ bindCheatCodes({
   unlockAll: () => {
     profile.completed = MISSIONS.map((m) => m.id)
     profile.scrap += CHEAT_CURRENCY
+    profile.chips += CHEAT_CURRENCY
     profile.amber += CHEAT_CURRENCY
-    profile.zcoins += CHEAT_CURRENCY * ZCOIN_RATE.amber
+    profile.cores += CHEAT_CURRENCY
+    profile.zcoins += CHEAT_CURRENCY
     persist()
     renderCampaign()
     renderArsenal()

@@ -95,6 +95,21 @@ function localSnapshot(username: string): CloudSave {
   }
 }
 
+/**
+ * Immediately overwrites the signed-in cloud save with the local one, so a
+ * data reset is not undone by the next cloud hydration.
+ */
+export async function overwriteCloudSave(): Promise<void> {
+  if (pending) clearTimeout(pending)
+  pending = null
+  const uid = account?.uid
+  const name = account?.username
+  if (!uid || !name || !cloudAvailable()) return
+  await setDoc(doc(db(), 'users', uid), localSnapshot(name)).catch(() => {
+    // Offline or rules-denied: the local wipe still stands.
+  })
+}
+
 /** Writes the whole local save to `users/{uid}`, debounced to one write/sec. */
 export function pushCloudSave(): void {
   if (!account || !cloudAvailable()) return

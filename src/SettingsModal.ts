@@ -20,6 +20,7 @@ import { SURVIVOR_SKINS, drawSurvivor, skinUnlockHint, skinUnlocked } from './su
 import { clearArcadeStats } from './arcadeStats'
 import {
   PASSWORD_WARNING,
+  overwriteCloudSave,
   cloudAvailable,
   currentAccount,
   login,
@@ -265,11 +266,11 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
       <p class="mt-6 text-xs text-slate-500">Name, avatar and volume are saved to this browser automatically.</p>
       <div class="mt-8 rounded-xl bg-rose-500/5 p-4 ring-1 ring-rose-400/30">
         <div class="text-xs font-black uppercase tracking-widest text-rose-300">Danger Zone</div>
-        <p class="mt-1 text-xs text-slate-400">Wipes this browser's save: every mission unlock, weapon, currency balance, survivor pick and arcade high score goes back to zero.</p>
+        <p class="mt-1 text-xs text-slate-400">Wipes your save, here and in your cloud account: every mission unlock, weapon, Scrap, Chips, Amber, Cores and Z-Coins balance, owned and equipped skin, survivor pick and arcade high score goes back to zero.</p>
         ${
           resetArmed
             ? `<div class="mt-3 rounded-lg bg-rose-500/10 p-3 ring-1 ring-rose-400/50">
-                 <div class="text-xs font-bold text-rose-200">Are you sure? This cannot be undone.</div>
+                 <div class="text-xs font-bold text-rose-200">Are you sure you want to reset all game data? This cannot be undone.</div>
                  <div class="mt-3 flex flex-wrap gap-2">
                    <button id="data-reset-confirm" class="rounded-lg bg-rose-500/80 px-4 py-2 text-xs font-black uppercase tracking-widest text-white hover:bg-rose-500">Yes, Reset Everything</button>
                    <button id="data-reset-cancel" class="rounded-lg bg-white/10 px-4 py-2 text-xs font-bold text-slate-200 hover:bg-white/20">Cancel</button>
@@ -449,7 +450,7 @@ export function mountSettings(locker: LockerHost): SettingsPanel {
       clearProfile()
       clearArcadeStats()
       // Reload so every menu, loadout and HUD rebuilds from the blank save.
-      window.location.reload()
+      void overwriteCloudSave().finally(() => window.location.reload())
     })
 
     const slider = (id: string, key: 'bgmVolume' | 'sfxVolume') => {
