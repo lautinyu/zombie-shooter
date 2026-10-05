@@ -196,7 +196,7 @@ app.innerHTML = `
           <span id="profile-avatar" class="text-xl leading-none">🧟</span>
           <span id="profile-name-label">Set Profile</span>
         </button>
-        <div class="mt-2 text-center text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="menu-zcoins">0</span></div>
+        <div class="mt-2 text-center text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="menu-zcoins">0</span> · <span class="text-slate-300">🔩 Scrap: <span id="menu-scrap">0</span></span> · <span class="text-orange-300">🟠 Amber: <span id="menu-amber">0</span></span></div>
         <nav class="mt-3 flex flex-wrap justify-center gap-3">
           <button id="shop-btn" class="rounded-lg bg-yellow-500/15 px-6 py-2 text-sm font-bold text-yellow-300 ring-1 ring-yellow-400/40 hover:bg-yellow-500/25">Weapons Shop</button>
           <button id="locker-btn" class="rounded-lg bg-sky-500/15 px-6 py-2 text-sm font-bold text-sky-300 ring-1 ring-sky-400/40 hover:bg-sky-500/25">Locker</button>
@@ -301,7 +301,7 @@ app.innerHTML = `
     <div class="w-full max-w-5xl">
       <div class="flex items-baseline justify-between">
         <h2 id="arsenal-title" class="text-3xl font-black tracking-tight text-yellow-400">WEAPONS SHOP</h2>
-        <div class="text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="arsenal-zcoins">0</span></div>
+        <div class="text-sm font-bold text-yellow-300">🪙 Z-Coins: <span id="arsenal-zcoins">0</span> · <span class="text-slate-300">🔩 Scrap: <span id="arsenal-scrap">0</span></span> · <span class="text-orange-300">🟠 Amber: <span id="arsenal-amber">0</span></span></div>
       </div>
       <div class="mt-4 flex gap-2 text-xs">
         <button id="slot-primary" class="rounded-lg px-4 py-1.5 font-bold">Primary</button>
@@ -440,7 +440,7 @@ function missionCard(m: Mission): HTMLElement {
     <p class="mt-1 text-xs text-slate-400">${m.description}</p>
     <div class="mt-3 flex items-center gap-2">
       ${badge}
-      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">🪙 ${missionCoinReward(m)} Z-Coins</span>
+      <span class="rounded-md bg-yellow-500/15 px-2 py-0.5 text-[11px] font-semibold text-yellow-300">🔩 ${missionReward(m)} Scrap${missionBonusAmber(m) ? ` · 🟠 ${missionBonusAmber(m)} Amber` : ''}</span>
     </div>
   `
   if (open) card.addEventListener('click', () => launch(m))
@@ -1106,22 +1106,12 @@ function startCampaignFlow() {
   launch(next)
 }
 
-/** Kill earnings, still tallied as scrap (and arctic chips), paid out in Z-Coins. */
-function runCoins(scrap: number, chips: number): number {
-  return scrap * ZCOIN_RATE.scrap + chips * ZCOIN_RATE.chips
-}
-
-/** A mission's clear bonus: its scrap bounty plus its chapter bounty, in Z-Coins. */
-function missionCoinReward(m: Mission): number {
-  const chapterBonus =
-    m.chapter === 2
-      ? missionChipReward(m) * ZCOIN_RATE.chips
-      : m.chapter === 3
-        ? missionAmberReward(m) * ZCOIN_RATE.amber
-        : m.chapter === 4
-          ? missionCoreReward(m) * ZCOIN_RATE.cores
-          : 0
-  return missionReward(m) * ZCOIN_RATE.scrap + chapterBonus
+/** A mission's chapter bounty, paid in Amber on top of its Scrap reward. */
+function missionBonusAmber(m: Mission): number {
+  if (m.chapter === 2) return missionChipReward(m)
+  if (m.chapter === 3) return missionAmberReward(m)
+  if (m.chapter === 4) return missionCoreReward(m)
+  return 0
 }
 
 function launch(m: Mission) {
@@ -1272,6 +1262,10 @@ function persist() {
   saveProfile(profile)
   el('menu-zcoins').textContent = `${profile.zcoins}`
   el('arsenal-zcoins').textContent = `${profile.zcoins}`
+  for (const pre of ['menu', 'arsenal']) {
+    el(`${pre}-scrap`).textContent = `${profile.scrap}`
+    el(`${pre}-amber`).textContent = `${profile.amber}`
+  }
   el('menu-equipped').textContent = `${weaponById(profile.primary).name} + ${
     weaponById(profile.secondary).name
   }`
@@ -1311,7 +1305,7 @@ function slotWeapons(): Weapon[] {
 }
 
 function priceLabel(w: Weapon): string {
-  return `${zcoinPrice(w)} Z-Coins`
+  return w.currency === 'scrap' ? `${zcoinPrice(w)} Z-Coins` : `${zcoinPrice(w)} Z-Coins (${w.price} Amber)`
 }
 
 function equippedIn(w: Weapon) {
@@ -1587,15 +1581,17 @@ game.onStateChange = (state: GameState) => {
     if (!profile.completed.includes(currentMission.id)) profile.completed.push(currentMission.id)
   }
   if (state === 'won' || state === 'lost') {
-    const fromKills = runCoins(game.scrapEarned, currentMission.chapter === 2 ? game.chipsEarned : 0)
-    const bonus = state === 'won' ? missionCoinReward(currentMission) : 0
-    const total = fromKills + bonus
-    profile.zcoins += total
+    const won = state === 'won'
+    const scrapGain = game.scrapEarned + (won ? missionReward(currentMission) : 0)
+    const amberGain =
+      (currentMission.chapter === 2 ? game.chipsEarned : 0) + (won ? missionBonusAmber(currentMission) : 0)
+    profile.scrap += scrapGain
+    profile.amber += amberGain
     persist()
-    const rewardText =
-      state === 'won'
-        ? `+${total} Z-Coins earned (${fromKills} from kills, ${bonus} mission bonus)`
-        : `+${total} Z-Coins salvaged from kills`
+    const gains = `+${scrapGain} Scrap${amberGain ? ` · +${amberGain} Amber` : ''}`
+    const rewardText = won
+      ? `${gains} earned. Trade them for Z-Coins at the Shop exchange.`
+      : `${gains} salvaged from kills`
     el(state === 'won' ? 'win-reward' : 'lose-reward').textContent = rewardText
     el(state === 'won' ? 'win-summary' : 'lose-summary').innerHTML = combatSummaryHtml(game.combatStats())
   }
@@ -1940,7 +1936,7 @@ game.onHud = (h: Hud) => {
 
   hudWeapon.textContent = h.weaponName
   hudPerk.textContent = h.perkName ? `Talent: ${h.perkName}` : 'No talent'
-  hudScrap.textContent = `+${runCoins(h.scrap, h.chips)} Z-Coins`
+  hudScrap.textContent = `+${h.scrap} Scrap${h.chips ? ` · +${h.chips} Amber` : ''}`
 }
 
 // Developer cheat code: type "cheat" on the mission board for the prompt.
@@ -1948,7 +1944,9 @@ bindCheatCodes({
   active: () => !menu.classList.contains('hidden'),
   unlockAll: () => {
     profile.completed = MISSIONS.map((m) => m.id)
-    profile.zcoins += CHEAT_CURRENCY * (ZCOIN_RATE.scrap + ZCOIN_RATE.chips + ZCOIN_RATE.amber + ZCOIN_RATE.cores)
+    profile.scrap += CHEAT_CURRENCY
+    profile.amber += CHEAT_CURRENCY
+    profile.zcoins += CHEAT_CURRENCY * ZCOIN_RATE.amber
     persist()
     renderCampaign()
     renderArsenal()

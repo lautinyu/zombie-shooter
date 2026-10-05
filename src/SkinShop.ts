@@ -1,8 +1,8 @@
 import { playSfx } from './audio'
 import type { GunSkinId } from './gunSkins'
 import { GUN_SKINS, paintGun } from './gunSkins'
-import type { Profile } from './profile'
-import { campaignCleared, ngPlusUnlocked } from './profile'
+import type { ExchangeResource, Profile } from './profile'
+import { ZCOIN_RATE, campaignCleared, exchangeForZCoins, ngPlusUnlocked } from './profile'
 import type { SurvivorSkin, SurvivorSkinId } from './survivorSkins'
 import { SURVIVOR_SKINS, drawSurvivor, skinUnlockHint, skinUnlocked } from './survivorSkins'
 import { weaponById } from './weapons'
@@ -13,7 +13,7 @@ export interface SkinShopHost {
   save: () => void
 }
 
-export type ShopTab = 'characters' | 'weapons'
+export type ShopTab = 'characters' | 'weapons' | 'exchange'
 
 export interface SkinShop {
   open: (tab?: ShopTab) => void
@@ -101,6 +101,27 @@ export function mountSkinShop(host: SkinShopHost): SkinShop {
       </div>`
   }
 
+  const resourceLabel = (res: ExchangeResource) => (res === 'scrap' ? '🔩 Scrap' : '🟠 Amber')
+
+  const exchangeCard = (res: ExchangeResource, profile: Profile) => {
+    const have = profile[res]
+    const rate = ZCOIN_RATE[res]
+    return `
+      <div class="rounded-xl bg-black/40 p-4 ring-1 ring-white/10">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <span class="text-sm font-black uppercase tracking-widest ${res === 'scrap' ? 'text-slate-200' : 'text-orange-300'}">${resourceLabel(res)}</span>
+          <span class="font-mono text-xs text-slate-400">You have ${have} · 1 = ${rate} Z-Coin${rate === 1 ? '' : 's'}</span>
+        </div>
+        <input data-ex-range="${res}" type="range" min="0" max="${have}" step="1" value="0" ${have === 0 ? 'disabled' : ''} class="mt-3 w-full accent-yellow-400" />
+        <div class="mt-2 flex flex-wrap items-center gap-2">
+          <input data-ex-qty="${res}" type="number" inputmode="numeric" min="0" max="${have}" step="1" value="0" class="w-28 rounded-md bg-slate-800 px-2 py-1 font-mono text-sm text-white ring-1 ring-white/10" />
+          <button data-ex-max="${res}" class="rounded-md bg-white/10 px-2 py-1 text-[10px] font-black uppercase tracking-widest text-slate-200 hover:bg-white/20">Max</button>
+          <span data-ex-out="${res}" class="font-mono text-sm font-bold text-yellow-300">= 0 Z-Coins</span>
+          <button data-ex-go="${res}" class="ml-auto rounded-md bg-yellow-400 px-3 py-1 text-[10px] font-black uppercase tracking-widest text-yellow-950 hover:bg-yellow-300">Convert</button>
+        </div>
+      </div>`
+  }
+
   const render = () => {
     const profile = host.profile()
     const tabButton = (id: ShopTab, label: string) =>
@@ -108,7 +129,10 @@ export function mountSkinShop(host: SkinShopHost): SkinShop {
         tab === id ? 'bg-fuchsia-500/20 text-fuchsia-200 ring-fuchsia-400/50' : 'bg-white/5 text-slate-400 ring-white/10 hover:bg-white/10'
       }">${label}</button>`
     const body =
-      tab === 'characters'
+      tab === 'exchange'
+        ? `<p class="mb-3 text-[11px] text-slate-500">Turn campaign Scrap and Amber into Z-Coins. Pick an amount with the slider or type it in; exchanges are final.</p>
+           <div class="grid gap-3 md:grid-cols-2">${exchangeCard('scrap', profile)}${exchangeCard('amber', profile)}</div>`
+        : tab === 'characters'
         ? `<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">${SURVIVOR_SKINS.filter((s) => s.price > 0)
             .map((s) => characterCard(s, profile))
             .join('')}</div>
@@ -121,14 +145,15 @@ export function mountSkinShop(host: SkinShopHost): SkinShop {
       <div class="flex items-center justify-between gap-3 border-b border-white/10 px-6 py-4">
         <div>
           <div class="text-2xl font-black tracking-tight text-fuchsia-300">SKIN SHOP</div>
-          <div class="text-[11px] uppercase tracking-widest text-slate-500">Spend Z-Coins on character outfits and weapon camos</div>
+          <div class="text-[11px] uppercase tracking-widest text-slate-500">Exchange Scrap and Amber, spend Z-Coins on outfits and camos</div>
         </div>
         <div class="flex items-center gap-3">
           <span class="rounded-full bg-yellow-400/15 px-4 py-1.5 font-mono text-sm font-black text-yellow-300 ring-1 ring-yellow-400/40">🪙 ${profile.zcoins} Z-Coins</span>
+          <span class="hidden rounded-full bg-white/5 px-3 py-1.5 font-mono text-xs font-bold text-slate-300 ring-1 ring-white/10 sm:inline">🔩 ${profile.scrap} · <span class="text-orange-300">🟠 ${profile.amber}</span></span>
           <button data-shop-close class="rounded-lg bg-white/10 px-3 py-1.5 text-sm font-black text-slate-200 hover:bg-white/20">✕</button>
         </div>
       </div>
-      <div class="flex gap-2 px-6 pt-4">${tabButton('characters', 'Character Skins')}${tabButton('weapons', 'Gun Skins')}</div>
+      <div class="flex gap-2 px-6 pt-4">${tabButton('characters', 'Character Skins')}${tabButton('weapons', 'Gun Skins')}${tabButton('exchange', 'Exchange')}</div>
       <div class="min-h-0 flex-1 overflow-y-auto px-6 py-4">
         ${notice ? `<div class="mb-3 rounded-lg bg-white/5 px-3 py-2 text-xs font-bold text-amber-300 ring-1 ring-white/10">${notice}</div>` : ''}
         ${body}
@@ -156,8 +181,40 @@ export function mountSkinShop(host: SkinShopHost): SkinShop {
     panel.querySelector('[data-shop-close]')?.addEventListener('click', close)
     for (const b of panel.querySelectorAll<HTMLButtonElement>('[data-shop-tab]')) {
       b.addEventListener('click', () => {
-        tab = b.dataset.shopTab === 'weapons' ? 'weapons' : 'characters'
+        const next = b.dataset.shopTab
+        tab = next === 'weapons' || next === 'exchange' ? next : 'characters'
         notice = ''
+        render()
+      })
+    }
+    for (const res of ['scrap', 'amber'] as const) {
+      const range = panel.querySelector<HTMLInputElement>(`[data-ex-range="${res}"]`)
+      const qty = panel.querySelector<HTMLInputElement>(`[data-ex-qty="${res}"]`)
+      const out = panel.querySelector<HTMLElement>(`[data-ex-out="${res}"]`)
+      if (!range || !qty || !out) continue
+      const sync = (raw: number) => {
+        const have = host.profile()[res]
+        const amount = Math.max(0, Math.min(have, Math.floor(Number.isFinite(raw) ? raw : 0)))
+        range.value = `${amount}`
+        qty.value = `${amount}`
+        out.textContent = `= ${amount * ZCOIN_RATE[res]} Z-Coins`
+        return amount
+      }
+      range.addEventListener('input', () => sync(Number(range.value)))
+      qty.addEventListener('input', () => sync(Number(qty.value)))
+      panel.querySelector(`[data-ex-max="${res}"]`)?.addEventListener('click', () => sync(host.profile()[res]))
+      panel.querySelector(`[data-ex-go="${res}"]`)?.addEventListener('click', () => {
+        const amount = sync(Number(qty.value))
+        if (amount === 0) {
+          notice = `Choose how much ${resourceLabel(res)} to exchange.`
+          playSfx('denied')
+          render()
+          return
+        }
+        const gained = exchangeForZCoins(host.profile(), res, amount)
+        host.save()
+        notice = `Exchanged ${amount} ${resourceLabel(res)} for ${gained} Z-Coins.`
+        playSfx('coin')
         render()
       })
     }

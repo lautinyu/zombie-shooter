@@ -16,9 +16,9 @@ export interface GunSkin {
 }
 
 export const GUN_SKINS: GunSkin[] = [
-  { id: 'camo', name: 'Tactical Camo', blurb: 'Olive, drab and bark woodland pattern.', price: 200, ring: 'ring-lime-500', text: 'text-lime-300' },
-  { id: 'synthwave', name: 'Neon Synthwave', blurb: 'Midnight body, magenta and cyan glow.', price: 450, ring: 'ring-fuchsia-400', text: 'text-fuchsia-300' },
-  { id: 'alien', name: 'Cyber Alien', blurb: 'Bio-green circuitry pulsing on violet.', price: 600, ring: 'ring-emerald-400', text: 'text-emerald-300' },
+  { id: 'camo', name: 'Tactical Camo', blurb: 'Olive, drab and bark woodland pattern.', price: 750, ring: 'ring-lime-500', text: 'text-lime-300' },
+  { id: 'synthwave', name: 'Neon Synthwave', blurb: 'Midnight body, magenta and cyan glow.', price: 850, ring: 'ring-fuchsia-400', text: 'text-fuchsia-300' },
+  { id: 'alien', name: 'Cyber Alien', blurb: 'Bio-green circuitry pulsing on violet.', price: 950, ring: 'ring-emerald-400', text: 'text-emerald-300' },
   { id: 'gold', name: 'Gold', blurb: 'Mirror-polished 24k plating.', price: 1000, ring: 'ring-yellow-300', text: 'text-yellow-200' },
 ]
 

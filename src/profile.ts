@@ -13,8 +13,12 @@ export const PROFILE_KEY = 'zombie-shooter-profile-v1'
 const STORAGE_KEY = PROFILE_KEY
 
 export interface Profile {
-  /** The one account currency, earned in campaign and Endless Horde runs. */
+  /** Shop currency: bought with Scrap/Amber at the exchange, or earned in Endless Horde. */
   zcoins: number
+  /** Campaign salvage from kills and mission bounties; exchanged into Z-Coins. */
+  scrap: number
+  /** Premium campaign resource from chapter 2-4 bounties; exchanged into Z-Coins. */
+  amber: number
   owned: WeaponId[]
   /** Heavy firearm carried in the primary slot. */
   primary: WeaponId
@@ -40,15 +44,26 @@ export interface Profile {
 }
 
 /**
- * Z-Coins per unit of each old chapter currency. Saves from before the merge
- * are converted at these rates, and run earnings still tallied per chapter
- * (scrap from kills, chip/amber/core bonuses) are paid out through them.
+ * Z-Coins per unit of each campaign resource. Scrap and Amber are exchanged at
+ * these rates in the shop; old Chips and Cores wallets were folded in on load.
  */
 export const ZCOIN_RATE: Record<Currency, number> = { scrap: 1, chips: 4, amber: 5, cores: 6 }
 
-/** A weapon's shop price in Z-Coins. */
+/** Resources the shop exchange accepts. */
+export type ExchangeResource = 'scrap' | 'amber'
+
+/** Trades `amount` of a resource for Z-Coins; returns the Z-Coins gained. */
+export function exchangeForZCoins(profile: Profile, resource: ExchangeResource, amount: number): number {
+  const spend = Math.max(0, Math.min(Math.floor(amount), profile[resource]))
+  const gained = spend * ZCOIN_RATE[resource]
+  profile[resource] -= spend
+  profile.zcoins += gained
+  return gained
+}
+
+/** A weapon's shop price in Z-Coins: scrap-tier at the Scrap rate, higher tiers at the Amber rate. */
 export function zcoinPrice(w: Weapon): number {
-  return w.price * ZCOIN_RATE[w.currency]
+  return w.price * (w.currency === 'scrap' ? ZCOIN_RATE.scrap : ZCOIN_RATE.amber)
 }
 
 type CoinSink = (amount: number) => void
@@ -107,6 +122,8 @@ export function clearProfile() {
 
 const DEFAULT_PROFILE: Profile = {
   zcoins: 0,
+  scrap: 0,
+  amber: 0,
   owned: [...STARTER_WEAPONS],
   primary: 'old-rifle',
   secondary: 'm9-sidearm',
@@ -123,15 +140,10 @@ const DEFAULT_PROFILE: Profile = {
 
 const count = (value: unknown): number => (typeof value === 'number' && value >= 0 ? Math.floor(value) : 0)
 
-/** Saves written before Z-Coins carry four chapter wallets; fold them into one. */
+/** Saves written before Z-Coins carry Chips and Cores wallets; fold those in. Scrap and Amber stay separate. */
 function readZCoins(record: Record<string, unknown>): number {
   if (typeof record.zcoins === 'number') return count(record.zcoins)
-  return (
-    count(record.scrap) * ZCOIN_RATE.scrap +
-    count(record.chips) * ZCOIN_RATE.chips +
-    count(record.amber) * ZCOIN_RATE.amber +
-    count(record.cores) * ZCOIN_RATE.cores
-  )
+  return count(record.chips) * ZCOIN_RATE.chips + count(record.cores) * ZCOIN_RATE.cores
 }
 
 function readGunSkins(value: unknown, owned: GunSkinId[]): Profile['gunSkins'] {
@@ -186,6 +198,8 @@ export function loadProfile(): Profile {
     const ownedGunSkins = Array.isArray(record.ownedGunSkins) ? record.ownedGunSkins.filter(isGunSkinId) : []
     return {
       zcoins: readZCoins(record),
+      scrap: count(record.scrap),
+      amber: count(record.amber),
       owned,
       primary: pick('primary', record.primary),
       secondary: pick('secondary', record.secondary),
