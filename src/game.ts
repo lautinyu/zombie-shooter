@@ -341,9 +341,12 @@ interface Medkit {
   arm: number
 }
 
-/** The field upgrades the Crucible offers, three at a time every minute. */
+/** Field upgrades drafted three at a time: every minute in the Crucible, at checkpoints elsewhere. */
 type ArenaPerkId =
   | 'ally'
+  | 'vampiric'
+  | 'ricochet'
+  | 'incendiary'
   | 'lifesteal'
   | 'haste'
   | 'armour'
@@ -523,6 +526,8 @@ interface Bullet {
   scored: boolean
   /** Incendiary attachment: every enemy it hits catches fire. */
   incendiary?: boolean
+  /** Ricochet perk: times a spent round may still skip to another enemy. */
+  bounces?: number
   maxLife: number
   falloff: number
   tracerLength: number
@@ -1045,6 +1050,14 @@ const ARENA_BARREL_FIRE_COST = 0.05
 const ARENA_BARREL_KNOCKBACK = 22
 /** Each reload stack cuts a quarter off the time spent swapping mags. */
 const ARENA_RELOAD = 0.25
+/** Vampiric Heal: health returned to every standing player per kill, per stack. */
+const VAMPIRIC_HEAL = 4
+/** Ricochet: a spent round skips to the nearest unhit enemy within range at reduced damage. */
+const RICOCHET_RANGE = 260
+const RICOCHET_DAMAGE = 0.7
+/** Campaign missions outside the Crucible open a perk draft this often, a few times per run. */
+const CHECKPOINT_INTERVAL = 75
+const CHECKPOINT_DRAFTS = 3
 
 const ARENA_PERKS: ArenaPerk[] = [
   {
@@ -1095,6 +1108,24 @@ const ARENA_PERKS: ArenaPerk[] = [
     blurb: 'Reloads finish 25% faster',
     color: '#22d3ee',
   },
+  {
+    id: 'vampiric',
+    name: 'Vampiric Heal',
+    blurb: `Every kill heals the squad ${VAMPIRIC_HEAL} HP`,
+    color: '#dc2626',
+  },
+  {
+    id: 'ricochet',
+    name: 'Ricochet Bullets',
+    blurb: 'Spent rounds bounce to one more nearby enemy at 70% damage',
+    color: '#c4b5fd',
+  },
+  {
+    id: 'incendiary',
+    name: 'Incendiary Ammo',
+    blurb: 'Every round sets its target on fire',
+    color: '#f97316',
+  },
 ]
 
 /** Greedily breaks a blurb into lines that fit the given pixel width. */
@@ -1118,6 +1149,9 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
 function emptyArenaPerks(): Record<ArenaPerkId, number> {
   return {
     ally: 0,
+    vampiric: 0,
+    ricochet: 0,
+    incendiary: 0,
     lifesteal: 0,
     haste: 0,
     armour: 0,
@@ -1253,6 +1287,8 @@ export class Game {
   private allies: Ally[] = []
   /** Number of minute drops already offered. */
   private arenaDrops = 0
+  private checkpointTimer = 0
+  private checkpointDrafts = 0
   private arenaBossSpawned = false
   private mutation: Mutation | null = null
   private mutationTimer = MUTATION_INTERVAL
@@ -1565,6 +1601,8 @@ export class Game {
     this.holdTimer = mission.holdTime ?? 0
     this.arenaTimer = 0
     this.arenaDrops = 0
+    this.checkpointTimer = 0
+    this.checkpointDrafts = 0
     this.arenaBossSpawned = false
     this.arenaPerks = emptyArenaPerks()
     this.arenaChoice = null
@@ -2062,6 +2100,7 @@ export class Game {
     this.updateNgHacks(dt)
     this.updateVitals(dt)
     this.updateArena(dt)
+    this.updateCheckpointDraft(dt)
     this.updateMutation(dt)
     if (this.generator) this.generator.hurt = Math.max(0, this.generator.hurt - dt)
     if (this.mission?.type === 'hold') this.holdTimer = Math.max(0, this.holdTimer - dt)
@@ -3214,7 +3253,8 @@ export class Game {
         hit: new Set<Enemy>(),
         owner: p,
         scored: false,
-        incendiary: w.attachments?.includes('incendiary'),
+        incendiary: w.attachments?.includes('incendiary') || this.arenaPerks.incendiary > 0,
+        bounces: this.arenaPerks.ricochet,
       })
     }
     this.stats.shots += w.pellets
@@ -3443,7 +3483,7 @@ export class Game {
             break
           }
           if (!b.pierce) {
-            dead = true
+            if (!this.ricochet(b, e.x, e.y)) dead = true
             break
           }
         }
@@ -3591,6 +3631,10 @@ export class Game {
     const z = this.enemies[index]
     this.enemies.splice(index, 1)
     this.kills += 1
+    const vampiric = this.arenaPerks.vampiric
+    if (vampiric > 0) {
+      for (const p of this.alivePlayers) p.hp = Math.min(p.maxHp, p.hp + VAMPIRIC_HEAL * vampiric)
+    }
     if (z.kind === 'exploder' && !z.detonated) {
       z.detonated = true
       this.pendingBlasts.push({ x: z.x, y: z.y })
@@ -4735,10 +4779,48 @@ export class Game {
    * frozen until one is picked with 1/2/3 or a click.
    */
   private openArenaChoice(wave: number, total: number) {
-    const options = [...ARENA_PERKS].sort(() => Math.random() - 0.5).slice(0, 3)
+    // Support drones only follow their owner inside the Crucible.
+    const pool = this.mission?.type === 'arena' ? ARENA_PERKS : ARENA_PERKS.filter((p) => p.id !== 'ally')
+    const options = [...pool].sort(() => Math.random() - 0.5).slice(0, 3)
     this.arenaChoice = { wave, total, options, cards: [], hover: -1 }
     clearInput()
     playSfx('medkit')
+  }
+
+  /** Campaign checkpoints: a few perk drafts spread through every non-Crucible mission. */
+  private updateCheckpointDraft(dt: number) {
+    const mission = this.mission
+    if (!mission || mission.type === 'arena' || this.checkpointDrafts >= CHECKPOINT_DRAFTS) return
+    if (this.boss && this.boss.hp > 0) return
+    this.checkpointTimer += dt
+    if (this.checkpointTimer < CHECKPOINT_INTERVAL) return
+    this.checkpointTimer = 0
+    this.checkpointDrafts += 1
+    this.openArenaChoice(this.checkpointDrafts, CHECKPOINT_DRAFTS)
+  }
+
+  /** Ricochet: redirects a spent round toward the closest enemy it has not hit yet. */
+  private ricochet(b: Bullet, x: number, y: number): boolean {
+    if (!b.bounces || b.bounces <= 0) return false
+    let target: Enemy | null = null
+    let best = RICOCHET_RANGE
+    for (const e of this.enemies) {
+      if (b.hit.has(e)) continue
+      const d = Math.hypot(e.x - x, e.y - y)
+      if (d < best) {
+        best = d
+        target = e
+      }
+    }
+    if (!target) return false
+    const speed = Math.hypot(b.vx, b.vy) || 1
+    const a = Math.atan2(target.y - y, target.x - x)
+    b.vx = Math.cos(a) * speed
+    b.vy = Math.sin(a) * speed
+    b.damage *= RICOCHET_DAMAGE
+    b.bounces -= 1
+    b.life = Math.max(b.life, Math.min(b.maxLife, 0.4))
+    return true
   }
 
   /** Locks in one of the drafted upgrades and releases the freeze. */
@@ -5486,7 +5568,7 @@ export class Game {
     ctx.font = '15px system-ui, sans-serif'
     ctx.fillStyle = '#94a3b8'
     ctx.fillText(
-      `Minute ${choice.wave} of ${choice.total} — pick one with 1, 2, 3 or a click`,
+      `${this.mission?.type === 'arena' ? 'Minute' : 'Checkpoint'} ${choice.wave} of ${choice.total} — pick one with 1, 2, 3 or a click`,
       w / 2,
       h / 2 - 142
     )

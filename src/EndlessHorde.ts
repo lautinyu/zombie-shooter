@@ -116,6 +116,10 @@ const UZI: WeaponDef = { name: 'Uzi', damage: 15, fireInterval: 0.06, magazine: 
 const KATANA: WeaponDef = { name: 'Katana', damage: 62, fireInterval: 0.42, magazine: 0, reload: 0, bulletSpeed: 0, spread: 0, pierce: 0, melee: { range: 74, arc: 1.7 } }
 const RIFLE: WeaponDef = { name: 'Battle Rifle', damage: 62, fireInterval: 0.24, magazine: 20, reload: 1.7, bulletSpeed: 1200, spread: 0.015, pierce: 1 }
 const SNIPER: WeaponDef = { name: 'Sniper Rifle', damage: 190, fireInterval: 1.0, magazine: 5, reload: 2.2, bulletSpeed: 1700, spread: 0, pierce: 3 }
+/** Vampiric Heal: HP per kill per card. Ricochet: bounce range and damage kept per bounce. */
+const VAMPIRIC_HEAL = 3
+const RICOCHET_RANGE = 260
+const RICOCHET_DAMAGE = 0.7
 const GLOCK: WeaponDef = { name: 'Glock', damage: 32, fireInterval: 0.28, magazine: 15, reload: 1.2, bulletSpeed: 1000, spread: 0.03, pierce: 0 }
 /** Slightly below the Uzi's damage, at the assault rifle's cadence. */
 const DRONE_DAMAGE = 13
@@ -221,6 +225,8 @@ interface Bullet {
   life: number
   damage: number
   pierce: number
+  /** Ricochet perk: times a spent round may still skip to another zombie. */
+  bounces: number
   drone: boolean
   hit: Set<Zombie>
   incendiary: boolean
@@ -553,7 +559,7 @@ export function mountEndlessHorde(
   let cls: ClassDef = CLASSES[0]
   let weapons: WeaponState[] = []
   let active = 0
-  const BASE_MODS = { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1, crit: 0, regen: 0, armor: 0, cooldown: 1 }
+  const BASE_MODS = { damage: 1, fireRate: 1, reload: 1, magazine: 1, pellets: 0, pierce: 0, speed: 1, crit: 0, regen: 0, armor: 0, cooldown: 1, vampiric: 0, ricochet: 0, incendiary: 0 }
   const mods = { ...BASE_MODS }
 
   const player = { x: ARENA_W / 2, y: ARENA_H / 2, hp: BASE_MAX_HP, maxHp: BASE_MAX_HP, fireTimer: 0, angle: 0, hurt: 0, slash: 0, stride: 0 }
@@ -659,6 +665,26 @@ export function mountEndlessHorde(
         drone.cooldown = Math.min(drone.cooldown, DRONE_COOLDOWN * mods.cooldown)
       },
       available: () => cls.drone && mods.cooldown > 0.4,
+    },
+    {
+      icon: '🩸',
+      title: 'Vampiric Heal',
+      desc: () => `Heal on every kill (+${mods.vampiric} → +${mods.vampiric + VAMPIRIC_HEAL} HP)`,
+      apply: () => (mods.vampiric += VAMPIRIC_HEAL),
+    },
+    {
+      icon: '↪️',
+      title: 'Ricochet Bullets',
+      desc: () => `Spent rounds bounce to +1 more nearby zombie at 70% damage (${mods.ricochet} → ${mods.ricochet + 1})`,
+      apply: () => (mods.ricochet += 1),
+      available: () => mods.ricochet < 3 && weapons.some((w) => !w.def.melee),
+    },
+    {
+      icon: '☄️',
+      title: 'Incendiary Ammo',
+      desc: () => 'Every bullet sets zombies burning',
+      apply: () => (mods.incendiary = 1),
+      available: () => mods.incendiary === 0 && weapons.some((w) => !w.def.melee),
     },
     { icon: '🔥', title: 'Fire Rate', desc: () => '+15% fire and swing rate', apply: () => (mods.fireRate *= 1.15) },
   ]
@@ -1002,8 +1028,33 @@ export function mountEndlessHorde(
     if (sparks.length > 600) sparks.splice(0, sparks.length - 600)
   }
 
+  /** Ricochet perk: redirects a spent round toward the closest zombie it has not hit. */
+  const ricochet = (b: Bullet, from: Zombie) => {
+    if (b.bounces <= 0) return false
+    let target: Zombie | null = null
+    let best = RICOCHET_RANGE * RICOCHET_RANGE
+    for (const z of zombies) {
+      if (z.hp <= 0 || b.hit.has(z)) continue
+      const d2 = (z.x - from.x) ** 2 + (z.y - from.y) ** 2
+      if (d2 < best) {
+        best = d2
+        target = z
+      }
+    }
+    if (!target) return false
+    const speed = Math.hypot(b.vx, b.vy) || 1
+    const a = Math.atan2(target.y - from.y, target.x - from.x)
+    b.vx = Math.cos(a) * speed
+    b.vy = Math.sin(a) * speed
+    b.damage *= RICOCHET_DAMAGE
+    b.bounces -= 1
+    b.life = Math.max(b.life, 0.4)
+    return true
+  }
+
   const killZombie = (z: Zombie, byDrone = false) => {
     kills += 1
+    if (mods.vampiric > 0) player.hp = Math.min(player.maxHp, player.hp + mods.vampiric)
     if (z.kind === 'exploder') detonate(z)
     if (byDrone) stats.abilityKills += 1
     if (Math.random() < DROP_CHANCE[z.kind]) dropWeapon(z.x, z.y, z.kind === 'miniboss')
@@ -1161,7 +1212,7 @@ export function mountEndlessHorde(
     const pellets = 1 + mods.pellets
     const fan = 0.1
     const spread = def.spread * (w.mods.includes('laser') ? LASER_SPREAD_SCALE : 1)
-    const incendiary = w.mods.includes('incendiary')
+    const incendiary = w.mods.includes('incendiary') || mods.incendiary > 0
     stats.shots += pellets
     for (let i = 0; i < pellets; i++) {
       const offset = (i - (pellets - 1) / 2) * fan + (Math.random() - 0.5) * spread
@@ -1174,6 +1225,7 @@ export function mountEndlessHorde(
         life: 1.1,
         damage: def.damage * mods.damage,
         pierce: def.pierce + mods.pierce,
+        bounces: mods.ricochet,
         drone: false,
         hit: new Set(),
         incendiary,
@@ -1218,6 +1270,7 @@ export function mountEndlessHorde(
       life: 0.7,
       damage: DRONE_DAMAGE * mods.damage,
       pierce: 0,
+      bounces: 0,
       drone: true,
       hit: new Set(),
       incendiary: false,
@@ -1376,7 +1429,7 @@ export function mountEndlessHorde(
         damageZombie(z, b.damage, b.vx / speed, b.vy / speed, !b.drone)
         burst(b.x, b.y, '#dc2626', 2, 90)
         if (b.pierce <= 0) {
-          b.life = 0
+          if (!ricochet(b, z)) b.life = 0
           break
         }
         b.pierce -= 1
