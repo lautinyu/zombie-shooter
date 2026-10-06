@@ -50,6 +50,7 @@ import { mountVoidBlast } from './voidblast'
 import { mountEndlessGauntlet } from './EndlessGauntlet'
 import { mountEndlessHorde } from './EndlessHorde'
 import { mountFightingArcade } from './FightingArcade'
+import { mountRiotStage } from './RiotStage'
 import { mountArcadeHub } from './ArcadeHubScene'
 import { mountSettings } from './SettingsModal'
 import { mountSkinShop } from './SkinShop'
@@ -1491,7 +1492,17 @@ const horde = mountEndlessHorde(
     playMusic('menu')
   },
   () => profile.gunSkins,
+  {
+    balance: () => profile.scrap,
+    spend: (amount) => {
+      if (profile.scrap < amount) return false
+      profile.scrap -= amount
+      persist()
+      return true
+    },
+  },
 )
+const riotStage = mountRiotStage(leaveCabinet)
 
 const CABINETS: Record<ArcadeGameId, () => void> = {
   'crimson-highway': () => arcade.open(),
@@ -1499,6 +1510,7 @@ const CABINETS: Record<ArcadeGameId, () => void> = {
   'endless-gauntlet': () => gauntlet.open(),
   'rot-fighter': () => rotFighter.open(),
   'endless-horde': () => horde.open(),
+  'riot-stage': () => riotStage.open(),
 }
 
 const arcadeHub = mountArcadeHub(

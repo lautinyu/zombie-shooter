@@ -68,6 +68,15 @@ const CARDS: CabinetCard[] = [
     text: 'text-emerald-300',
     glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.45)]',
   },
+  {
+    id: 'riot-stage',
+    title: 'Riot Fighter: Stage Run',
+    tag: 'Belt brawler · 1P · 4 classes',
+    blurb: 'Fight through six sectors of Shamblers and Runners, past the Cryo Stalker, to the Canopy Leviathan. Faster clears score higher.',
+    ring: 'ring-cyan-500/60 hover:ring-cyan-300',
+    text: 'text-cyan-300',
+    glow: 'hover:shadow-[0_0_40px_rgba(34,211,238,0.45)]',
+  },
 ]
 
 export interface ArcadeHub {

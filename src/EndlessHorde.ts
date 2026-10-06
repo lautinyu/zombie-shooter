@@ -81,7 +81,26 @@ const STREET_COLOR = '#23262a'
 const BUILDING_COLOR = '#8b5a2b'
 const BUILDING_EDGE = '#5c3a1c'
 
-type Phase = 'select' | 'playing' | 'upgrade' | 'over'
+type Phase = 'select' | 'playing' | 'upgrade' | 'bench' | 'over'
+
+/** Overclock Bench: a Scrap-bought boost on the primary weapon until the next wave break. */
+type OverclockId = 'explosive' | 'rapid' | 'mag'
+
+interface Overclock {
+  id: OverclockId
+  icon: string
+  title: string
+  desc: string
+  cost: number
+}
+
+const OVERCLOCKS: Overclock[] = [
+  { id: 'explosive', icon: '💥', title: 'Explosive Rounds', desc: 'Primary rounds burst on impact, splashing 50% damage nearby', cost: 40 },
+  { id: 'rapid', icon: '⚡', title: 'Double Fire Rate', desc: 'Primary fires twice as fast', cost: 50 },
+  { id: 'mag', icon: '📦', title: 'Expanded Magazine', desc: 'Primary magazine doubled and refilled', cost: 30 },
+]
+const OVERCLOCK_SPLASH_RADIUS = 70
+const OVERCLOCK_SPLASH_SHARE = 0.5
 type ZombieKind = 'walker' | 'runner' | 'brute' | 'miniboss' | 'spitter' | 'exploder'
 type WaveEvent = 'blackout' | 'blood-moon'
 type ClassId = 'swat' | 'assassin' | 'technician' | 'marksman'
@@ -232,6 +251,8 @@ interface Bullet {
   incendiary: boolean
   /** Already counted as a hit for the accuracy tally. */
   scored: boolean
+  /** Overclocked primary round that bursts on impact. */
+  explosive: boolean
 }
 
 interface Spark {
@@ -365,6 +386,7 @@ export function mountEndlessHorde(
   onQuit: () => void,
   onMainMenu: () => void,
   gunSkins: () => { primary: GunSkinId | null; secondary: GunSkinId | null },
+  scrap: { balance: () => number; spend: (amount: number) => boolean },
 ): HordeCabinet {
   const overlay = document.createElement('div')
   overlay.className = 'fixed inset-0 z-40 hidden flex-col items-center justify-center bg-black/98 p-4'
@@ -462,6 +484,18 @@ export function mountEndlessHorde(
     <div class="text-[11px] uppercase tracking-widest text-slate-400">Press 1 · 2 · 3 or click a card</div>
   `
   frame.appendChild(upgradePanel)
+
+  const benchPanel = document.createElement('div')
+  benchPanel.className = 'absolute inset-3 hidden flex-col items-center justify-center gap-3 rounded-lg bg-black/85 p-4 text-center'
+  benchPanel.innerHTML = `
+    <div class="text-xs font-black uppercase tracking-[0.4em] text-orange-300">Safehouse · Overclock Bench</div>
+    <div class="text-2xl font-black uppercase tracking-widest text-white">Supercharge your primary</div>
+    <div id="horde-bench-scrap" class="text-sm font-bold text-amber-300"></div>
+    <div id="horde-bench-cards" class="grid w-full max-w-[780px] gap-3 sm:grid-cols-3"></div>
+    <button id="horde-bench-skip" type="button" class="rounded-lg bg-white/10 px-5 py-2 text-xs font-black uppercase tracking-widest text-slate-200 ring-1 ring-white/20 hover:bg-white/20">Skip [4 / Enter]</button>
+    <div class="text-[11px] uppercase tracking-widest text-slate-400">Lasts until the next wave break · Press 1 · 2 · 3 or click</div>
+  `
+  frame.appendChild(benchPanel)
 
   const overPanel = document.createElement('div')
   overPanel.className = 'absolute inset-3 hidden flex-col items-center justify-center gap-3 overflow-y-auto rounded-lg bg-black/85 p-4 text-center'
@@ -589,8 +623,15 @@ export function mountEndlessHorde(
 
   const cam = { x: 0, y: 0 }
 
+  let overclock: OverclockId | null = null
+  const overclocked = (w: WeaponState, id: OverclockId) => overclock === id && w === weapons[0]
   const magSize = (w: WeaponState) =>
-    Math.max(1, Math.round(w.def.magazine * mods.magazine * (w.mods.includes('extended') ? EXTENDED_MAG_SCALE : 1)))
+    Math.max(
+      1,
+      Math.round(
+        w.def.magazine * mods.magazine * (w.mods.includes('extended') ? EXTENDED_MAG_SCALE : 1) * (overclocked(w, 'mag') ? 2 : 1),
+      ),
+    )
   const current = () => weapons[active]
 
   const UPGRADES: Upgrade[] = [
@@ -724,7 +765,7 @@ export function mountEndlessHorde(
   const spawnRateMult = () => 1 + SPAWN_RATE_STEP * spawnSteps()
 
   const hidePanels = () => {
-    for (const panel of [selectPanel, upgradePanel, overPanel]) {
+    for (const panel of [selectPanel, upgradePanel, benchPanel, overPanel]) {
       panel.classList.add('hidden')
       panel.classList.remove('flex')
     }
@@ -752,6 +793,7 @@ export function mountEndlessHorde(
     upgradesTaken = 0
     bossBanner = 0
     waveEvent = null
+    overclock = null
     eventWave = 1
     eventBanner = 0
     shake = 0
@@ -940,6 +982,7 @@ export function mountEndlessHorde(
 
   const openUpgrade = () => {
     phase = 'upgrade'
+    overclock = null
     upgradesTaken += 1
     pointerDown = false
     const pool = UPGRADES.filter((up) => !up.available || up.available())
@@ -971,6 +1014,62 @@ export function mountEndlessHorde(
     if (!up) return
     up.apply()
     playSfx('medkit')
+    hidePanels()
+    openBench()
+  }
+
+  const benchScrap = el<HTMLDivElement>('#horde-bench-scrap')
+  const benchCards = el<HTMLDivElement>('#horde-bench-cards')
+  el<HTMLButtonElement>('#horde-bench-skip').addEventListener('click', () => leaveBench())
+
+  const openBench = () => {
+    phase = 'bench'
+    const wallet = scrap.balance()
+    benchScrap.textContent = `🔩 ${wallet} Scrap · ${weapons[0]?.def.name ?? ''}`
+    benchCards.innerHTML = ''
+    OVERCLOCKS.forEach((oc, i) => {
+      const afford = wallet >= oc.cost
+      const btn = document.createElement('button')
+      btn.type = 'button'
+      btn.disabled = !afford
+      btn.className = `flex flex-col items-center gap-1 rounded-xl p-4 text-center ring-2 transition ${
+        afford
+          ? 'bg-orange-950/60 ring-orange-500/40 hover:-translate-y-0.5 hover:bg-orange-900/70 hover:ring-orange-300'
+          : 'cursor-not-allowed bg-slate-900/60 opacity-50 ring-slate-600/40'
+      }`
+      btn.innerHTML = `
+        <div class="text-[10px] font-black uppercase tracking-widest text-orange-400">[${i + 1}]</div>
+        <div class="text-3xl">${oc.icon}</div>
+        <div class="text-sm font-black uppercase tracking-wider text-white">${oc.title}</div>
+        <div class="text-xs text-slate-300">${oc.desc}</div>
+        <div class="pt-1 text-xs font-black ${afford ? 'text-amber-300' : 'text-red-400'}">🔩 ${oc.cost} Scrap</div>
+      `
+      btn.addEventListener('click', () => buyOverclock(i))
+      benchCards.appendChild(btn)
+    })
+    showPanel(benchPanel)
+  }
+
+  const buyOverclock = (index: number) => {
+    if (phase !== 'bench') return
+    const oc = OVERCLOCKS[index]
+    const primary = weapons[0]
+    if (!oc || !primary) return
+    if (!scrap.spend(oc.cost)) {
+      playSfx('denied')
+      return
+    }
+    overclock = oc.id
+    if (oc.id === 'mag') {
+      primary.ammo = magSize(primary)
+      primary.reloading = 0
+    }
+    playSfx('overdrive')
+    leaveBench()
+  }
+
+  const leaveBench = () => {
+    if (phase !== 'bench') return
     hidePanels()
     phase = 'playing'
     last = performance.now()
@@ -1050,6 +1149,18 @@ export function mountEndlessHorde(
     b.bounces -= 1
     b.life = Math.max(b.life, 0.4)
     return true
+  }
+
+  const splash = (x: number, y: number, amount: number, skip: Zombie) => {
+    burst(x, y, '#f97316', 10, 200)
+    for (const other of zombies) {
+      if (other === skip || other.hp <= 0) continue
+      const dx = other.x - x
+      const dy = other.y - y
+      const d = Math.hypot(dx, dy)
+      if (d > OVERCLOCK_SPLASH_RADIUS + other.r) continue
+      damageZombie(other, amount, dx / (d || 1), dy / (d || 1), true)
+    }
   }
 
   const killZombie = (z: Zombie, byDrone = false) => {
@@ -1207,12 +1318,13 @@ export function mountEndlessHorde(
       startReload(w)
       return
     }
-    player.fireTimer = def.fireInterval / mods.fireRate
+    player.fireTimer = def.fireInterval / mods.fireRate / (overclocked(w, 'rapid') ? 2 : 1)
     w.ammo -= 1
     const pellets = 1 + mods.pellets
     const fan = 0.1
     const spread = def.spread * (w.mods.includes('laser') ? LASER_SPREAD_SCALE : 1)
     const incendiary = w.mods.includes('incendiary') || mods.incendiary > 0
+    const explosive = overclocked(w, 'explosive')
     stats.shots += pellets
     for (let i = 0; i < pellets; i++) {
       const offset = (i - (pellets - 1) / 2) * fan + (Math.random() - 0.5) * spread
@@ -1230,6 +1342,7 @@ export function mountEndlessHorde(
         hit: new Set(),
         incendiary,
         scored: false,
+        explosive,
       })
     }
     playSfx(def === SNIPER ? 'sniper' : def === REVOLVER ? 'barricade' : 'swap')
@@ -1275,6 +1388,7 @@ export function mountEndlessHorde(
       hit: new Set(),
       incendiary: false,
       scored: false,
+      explosive: false,
     })
   }
 
@@ -1428,6 +1542,7 @@ export function mountEndlessHorde(
         }
         damageZombie(z, b.damage, b.vx / speed, b.vy / speed, !b.drone)
         burst(b.x, b.y, '#dc2626', 2, 90)
+        if (b.explosive) splash(b.x, b.y, b.damage * OVERCLOCK_SPLASH_SHARE, z)
         if (b.pierce <= 0) {
           if (!ricochet(b, z)) b.life = 0
           break
@@ -1884,7 +1999,9 @@ export function mountEndlessHorde(
     }`
     const w = current()
     if (w) {
-      hudWeapon.textContent = w.mods.length ? `${w.def.name} ${modIcons(w.mods)}` : w.def.name
+      const oc = w === weapons[0] ? OVERCLOCKS.find((o) => o.id === overclock) : undefined
+      const name = w.mods.length ? `${w.def.name} ${modIcons(w.mods)}` : w.def.name
+      hudWeapon.textContent = oc ? `${name} ${oc.icon} ${oc.title}` : name
       hudAmmo.textContent = w.def.melee ? '∞' : `${w.ammo} / ${magSize(w)}`
       hudReload.classList.toggle('hidden', w.reloading <= 0)
     }
@@ -2082,7 +2199,7 @@ export function mountEndlessHorde(
     drawPops()
     ctx.restore()
 
-    if (phase === 'playing' || phase === 'upgrade') {
+    if (phase === 'playing' || phase === 'upgrade' || phase === 'bench') {
       if (waveEvent === 'blackout') drawBlackout()
       if (waveEvent === 'blood-moon') {
         ctx.fillStyle = `rgba(127,29,29,${0.16 + 0.04 * Math.sin(blink * 2)})`
@@ -2093,7 +2210,7 @@ export function mountEndlessHorde(
       ctx.fillStyle = `rgba(220,38,38,${player.hurt * 0.8})`
       ctx.fillRect(0, 0, VIEW_W, VIEW_H)
     }
-    if (phase === 'playing' || phase === 'upgrade') {
+    if (phase === 'playing' || phase === 'upgrade' || phase === 'bench') {
       drawLowHealthVignette(ctx, VIEW_W, VIEW_H, elapsed, lowHealthSeverity(player.hp, player.maxHp))
     }
     if (pickupBanner.life > 0) {
@@ -2115,7 +2232,7 @@ export function mountEndlessHorde(
       ctx.fillRect(0, 0, VIEW_W, VIEW_H)
       return
     }
-    if (phase === 'playing' || phase === 'upgrade') {
+    if (phase === 'playing' || phase === 'upgrade' || phase === 'bench') {
       updateHud()
       drawCanvasHud()
     }
@@ -2150,6 +2267,11 @@ export function mountEndlessHorde(
     }
     if (phase === 'upgrade') {
       if (key === '1' || key === '2' || key === '3') pickUpgrade(Number(key) - 1)
+      return
+    }
+    if (phase === 'bench') {
+      if (key === '1' || key === '2' || key === '3') buyOverclock(Number(key) - 1)
+      if (key === '4' || key === 'enter') leaveBench()
       return
     }
     if (phase === 'over') {

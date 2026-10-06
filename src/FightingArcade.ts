@@ -26,6 +26,10 @@ const JUMP_VELOCITY = -640
 const GRAVITY = 1750
 
 const MAX_HP = 200
+/** Class balance: every playable class carries 15% more health than the CPU baseline. */
+export const CLASS_HP_BONUS = 1.15
+/** Base health of a playable class before its own hpScale. */
+export const PLAYER_BASE_HP = MAX_HP * CLASS_HP_BONUS
 const ROUND_TIME = 70
 const ROUNDS_TO_WIN = 2
 
@@ -196,7 +200,7 @@ const MOVES: Record<MoveId, MoveData> = {
  * roster stays readable: every pick trades one edge for a matching weakness
  * rather than raising the damage ceiling.
  */
-interface Character {
+export interface Character {
   name: string
   tint: string
   dark: string
@@ -219,7 +223,7 @@ interface Character {
   ability: AbilityId | null
 }
 
-const ROSTER: Character[] = [
+export const ROSTER: Character[] = [
   {
     name: 'Warden',
     tint: '#e2e8f0',
@@ -510,7 +514,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     tint: from ? from.tint : char.tint,
     dark: from ? from.dark : char.dark,
     accent: from ? from.accent : char.accent,
-    maxHp: MAX_HP * (from ? from.hpScale : char.hpScale),
+    maxHp: (from ? MAX_HP * from.hpScale : PLAYER_BASE_HP * char.hpScale),
     speed: from ? from.speed : char.speed,
     power: from ? 1 : char.power,
     attackSpeed: from ? 1 : char.attackSpeed,
@@ -524,7 +528,7 @@ export function mountFightingArcade(onQuit: () => void): FightingCabinet {
     vx: 0,
     vy: 0,
     facing: id === 1 ? 1 : -1,
-    hp: MAX_HP * (from ? from.hpScale : char.hpScale),
+    hp: (from ? MAX_HP * from.hpScale : PLAYER_BASE_HP * char.hpScale),
     move: null,
     moveTimer: 0,
     moveHit: false,
